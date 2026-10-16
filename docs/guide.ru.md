@@ -317,7 +317,7 @@ comment: |
 | `page` | номер страницы | `page=3` |
 | `limit` | строк на странице, до 10 000 | `limit=500` |
 | `where` | SQL-условие фильтра | `where="created_at > now() - interval '1 day'"` |
-| `order` (или `sort`) | SQL-сортировка; по умолчанию по ключу. `sort=` при сохранении перепишется в `order=` | `order="created_at desc, id"` |
+| `order` | SQL-сортировка; по умолчанию по ключу | `order="created_at desc, id"` |
 | `columns` | какие колонки показывать, через запятую; без поля — все | `columns="full_name, email, pinfl"` |
 | `width` | ширина обрезки значений, `0` = не обрезать | `width=0` |
 | `apply` | `manual` или `save` | `apply=save` |

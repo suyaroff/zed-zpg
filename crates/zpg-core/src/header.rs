@@ -267,8 +267,7 @@ impl TableHeader {
                 "limit" => h.query.limit = num(&k, &v)?.clamp(1, 10_000),
                 "width" => h.width = num(&k, &v)?,
                 "where" => h.query.filter = v,
-                // `sort` is what people try first; it's written back as `order`.
-                "order" | "sort" => h.query.order = v,
+                "order" => h.query.order = v,
                 "columns" => h.columns = parse_ident_list(&v)?,
                 "apply" => {
                     h.apply = match v.as_str() {
@@ -316,11 +315,9 @@ mod tests {
     }
 
     #[test]
-    fn sort_is_order() {
-        let h = TableHeader::parse("# zpg v1 conn=c table=public.t sort=\"id desc\"").unwrap();
-        assert_eq!(h.query.order, "id desc");
-        assert!(h.render().contains(r#"order="id desc""#));
-        assert!(TableHeader::parse("# zpg v1 conn=c table=public.t sortt=id").unwrap_err().contains("fields:"));
+    fn unknown_field_lists_valid_ones() {
+        let e = TableHeader::parse("# zpg v1 conn=c table=public.t sort=id").unwrap_err();
+        assert!(e.contains("`sort`") && e.contains("order"), "{e}");
     }
 
     #[test]
