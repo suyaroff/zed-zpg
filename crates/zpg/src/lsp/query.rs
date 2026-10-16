@@ -11,7 +11,7 @@ use lsp_types::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use zpg_core::header::display_ident;
-use zpg_core::{Apply, Column, Issue, QualName, Query, SnapRow, Snapshot, sqlsplit, table};
+use zpg_core::{Apply, Column, Issue, QualName, Query, SnapRow, Snapshot, catalog, sqlsplit, table};
 
 use super::{
     CMD_EDIT_RESULT, CMD_RERUN, CMD_RUN, Doc, Kind, Res, Server, cell_at, command, encode_name, fnv, show, snapshot,
@@ -228,6 +228,17 @@ impl Server {
         self.publish(conn, key)?;
         let tags: Vec<&str> = outcomes.iter().map(|o| o.tag.as_str()).collect();
         show(conn, MessageType::INFO, format!("zpg: {} ({millis} ms)", tags.join("; ")))?;
+        if tags.iter().any(|t| t.starts_with("CREATE") || t.starts_with("DROP") || t.starts_with("ALTER")) {
+            let catalogs: Vec<String> = self
+                .docs
+                .iter()
+                .filter(|(_, d)| d.kind() == Kind::Catalog)
+                .map(|(k, _)| k.clone())
+                .collect();
+            for k in catalogs {
+                self.refresh_catalog(conn, &k)?;
+            }
+        }
 
         let Some((k, out)) = outcomes.iter().enumerate().rev().find(|(_, o)| !o.columns.is_empty()) else {
             return Ok(());
@@ -367,6 +378,33 @@ impl Server {
         self.show_document(conn, &target)
     }
 
+    /// Writes a `DROP` for the catalog entry on `line` into a `.sql` file and
+    /// opens it: dropping takes a look and a click on ▶, never one action.
+    pub(super) fn prepare_drop(&mut self, conn: &Connection, key: &str, line: u32) -> Res<()> {
+        let Some(doc) = self.docs.get(key) else {
+            return Ok(());
+        };
+        let Some((conn_name, table)) = catalog::entry_at(&doc.text, line) else {
+            return Ok(());
+        };
+        let kind = catalog::kind_at(&doc.text, line).unwrap_or_default();
+        let Some(root) = doc.path().and_then(|p| p.parent().map(Path::to_path_buf)) else {
+            return Ok(());
+        };
+        let target = root
+            .join(encode_name(&conn_name))
+            .join(format!("drop-{}.sql", table.file_stem()));
+        let text = format!(
+            "-- @conn {conn_name}\n\
+             -- Review, then run with ▶ (or ctrl-. → Run statement). This can't be undone.\n\
+             -- Add CASCADE to also drop views and foreign keys that depend on it.\n\
+             {};\n",
+            catalog::drop_statement(&kind, &table)
+        );
+        self.write_file(conn, &target, text)?;
+        self.show_document(conn, &target)
+    }
+
     pub(super) fn result_actions(&mut self, key: &str, path: &Path) -> Vec<CodeActionOrCommand> {
         let arg = || vec![Value::String(key.to_string())];
         let mut out = vec![command("zpg: Run again".into(), CMD_RERUN, arg())];
@@ -397,9 +435,9 @@ impl Server {
         if let Some(row) = parsed.rows.iter().position(|r| r.line == pos.line)
             && let Some(r) = st.snap.rows.get(row)
             && let Some(v) = &r.values[i]
-            && st.snap.cell(i, &r.values[i], &st.snap.widths()).1
         {
-            md += &format!("\n\n```\n{v}\n```");
+            let cut = st.snap.cell(i, &r.values[i], &st.snap.widths()).1;
+            md += &super::values::value_md(v, &col.type_name, cut);
         }
         Some(Hover {
             contents: HoverContents::Markup(MarkupContent {

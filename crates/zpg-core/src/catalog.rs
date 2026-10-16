@@ -72,6 +72,24 @@ pub fn entry_at(text: &str, line: u32) -> Option<(String, QualName)> {
     None
 }
 
+/// The kind written after the relation name on `line`: table, view, matview…
+pub fn kind_at(text: &str, line: u32) -> Option<String> {
+    let l = text.split('\n').nth(line as usize)?.trim();
+    let (_, n) = QualName::parse_prefix(l)?;
+    l[n..].split_whitespace().next().map(String::from)
+}
+
+/// `DROP …` for a relation of `kind`.
+pub fn drop_statement(kind: &str, name: &QualName) -> String {
+    let what = match kind {
+        "view" => "VIEW",
+        "matview" => "MATERIALIZED VIEW",
+        "foreign" => "FOREIGN TABLE",
+        _ => "TABLE",
+    };
+    format!("DROP {what} {}", name.sql())
+}
+
 pub fn is_catalog(text: &str) -> bool {
     text.lines().next().is_some_and(|l| l.trim_end() == HEADER)
 }
@@ -112,5 +130,10 @@ mod tests {
         );
         assert!(text.contains("! connection refused"));
         assert_eq!(entry_at(&text, 0), None);
+        assert_eq!(kind_at(&text, users + 1).as_deref(), Some("view"));
+        assert_eq!(
+            drop_statement("view", &QualName::new("public", "My View")),
+            r#"DROP VIEW "public"."My View""#
+        );
     }
 }

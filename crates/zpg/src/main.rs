@@ -2,6 +2,7 @@ mod config;
 mod db;
 mod lsp;
 mod state;
+mod tunnel;
 
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};

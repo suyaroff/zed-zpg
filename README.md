@@ -42,6 +42,7 @@ In the project's `.zed/settings.json` (`zed: open project settings`):
 - `${VAR}` is taken from the environment Zed sees for the project, so passwords can stay out of the file. Keep `.zed/settings.json` out of git if it holds secrets.
 - `read_only: true` opens every table of the connection read-only, and its transactions are read-only too.
 - TLS: `sslmode=prefer` (default) and `require` encrypt without checking the certificate, like libpq; unix sockets and `sslmode=disable` don't use TLS.
+- SSH: `{ "url": "postgresql:///app?host=/var/run/postgresql", "ssh": "deploy@prod", "ssh_options": ["-p", "2222"] }` tunnels through the system `ssh` (so `~/.ssh/config`, keys, agent and `ProxyJump` apply); the url names the database as the server sees it, a remote unix socket included. Key or agent auth only, and the host must already be in `known_hosts`. A dead tunnel is reopened on the next request.
 
 ## Editing rules
 
@@ -93,7 +94,7 @@ Edit the first line and save to reload with new settings:
 
 ## Code actions (`ctrl-.`)
 
-*Apply changes*, *Preview SQL*, *Open row*, *Insert row* (a template with `+`/DEFAULT/NULL filled in), *Next/Previous page*, *Refresh*, *Apply changes manually / on save*. In a row view: *Apply changes*, *Refresh row*. In the catalog: *Open table*, *Refresh catalog*.
+*Apply changes*, *Preview SQL*, *Open row*, *Insert row* (a template with `+`/DEFAULT/NULL filled in), *Next/Previous page*, *Refresh*, *Apply changes manually / on save*. In a row view: *Apply changes*, *Refresh row*. In the catalog: *Open table*, *Drop table…* (opens a `.sql` with the `DROP` to review and run with ▶; the catalog refreshes after DDL run from `.sql`), *Refresh catalog*.
 
 Pending changes are shown as a diagnostic on the header line. Changed cells and new rows are underlined via semantic tokens, which Zed only shows when enabled:
 

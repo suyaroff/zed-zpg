@@ -1,6 +1,7 @@
 mod complete;
 mod edits;
 mod query;
+mod values;
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -49,6 +50,7 @@ const CMD_OPEN_ROW: &str = "zpg.openRow";
 const CMD_RUN: &str = "zpg.run";
 const CMD_RERUN: &str = "zpg.rerun";
 const CMD_EDIT_RESULT: &str = "zpg.editResult";
+const CMD_DROP: &str = "zpg.drop";
 
 type Res<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
@@ -169,6 +171,7 @@ pub fn run() -> Res<()> {
                 CMD_RUN,
                 CMD_RERUN,
                 CMD_EDIT_RESULT,
+                CMD_DROP,
             ]
                 .map(String::from)
                 .to_vec(),
@@ -600,6 +603,11 @@ impl Server {
                     }
                     CMD_RERUN => self.rerun(conn, &key)?,
                     CMD_EDIT_RESULT => self.edit_result(conn, &key)?,
+                    CMD_DROP => {
+                        if let Some(line) = num(1) {
+                            self.prepare_drop(conn, &key, line)?;
+                        }
+                    }
                     CMD_OPEN | CMD_OPEN_ROW => {
                         if let Some(line) = num(1) {
                             let target = self.definition(&key, Position::new(line, 0));
@@ -1235,9 +1243,9 @@ impl Server {
                 if pos.line > 1
                     && let Some(r) = row_of_line(&snap, line)
                     && let Some(v) = &snap.rows[r].values[i]
-                    && snap.cell(i, &snap.rows[r].values[i], &snap.widths()).1
                 {
-                    md += &format!("\n\n```\n{v}\n```");
+                    let cut = snap.cell(i, &snap.rows[r].values[i], &snap.widths()).1;
+                    md += &values::value_md(v, &snap.columns[i].type_name, cut);
                 }
                 if let Some(fk) = snap.foreign_keys.iter().find(|f| f.columns.contains(&i))
                     && let Some(values) = fk_values(fk, |c| line_value(&snap, line, c))
@@ -1250,6 +1258,9 @@ impl Server {
                 let parsed = record::parse(&text, &snap);
                 let field = parsed.field_at(pos.line)?;
                 let mut md = column_md(&snap, field.col);
+                if let Ok(CellValue::Text(v)) = &field.value {
+                    md += &values::value_md(v, &snap.columns[field.col].type_name, false);
+                }
                 if let Some(fk) = snap.foreign_keys.iter().find(|f| f.columns.contains(&field.col)) {
                     let value_of = |c: usize| parsed.fields.iter().find(|f| f.col == c).and_then(|f| f.value.clone().ok());
                     if let Some(values) = fk_values(fk, value_of) {
@@ -1333,6 +1344,11 @@ impl Server {
                     out.push(command(
                         format!("zpg: Open {table}"),
                         CMD_OPEN,
+                        vec![arg(), Value::from(range.start.line)],
+                    ));
+                    out.push(command(
+                        format!("zpg: Drop {table}… (opens the SQL to review and run)"),
+                        CMD_DROP,
                         vec![arg(), Value::from(range.start.line)],
                     ));
                 }

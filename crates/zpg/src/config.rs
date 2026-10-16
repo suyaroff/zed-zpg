@@ -13,6 +13,13 @@ pub enum ConnSpec {
         url: String,
         #[serde(default)]
         read_only: bool,
+        /// `user@host` or a `~/.ssh/config` alias to tunnel through; the url
+        /// then names the database as the SSH server sees it.
+        #[serde(default)]
+        ssh: Option<String>,
+        /// Extra `ssh` arguments, e.g. `["-p", "2222"]`.
+        #[serde(default)]
+        ssh_options: Vec<String>,
     },
 }
 
@@ -25,6 +32,17 @@ impl ConnSpec {
 
     pub fn read_only(&self) -> bool {
         matches!(self, ConnSpec::Full { read_only: true, .. })
+    }
+
+    pub fn ssh(&self) -> Option<(&str, &[String])> {
+        match self {
+            ConnSpec::Full {
+                ssh: Some(target),
+                ssh_options,
+                ..
+            } => Some((target, ssh_options)),
+            _ => None,
+        }
     }
 }
 
@@ -112,13 +130,17 @@ mod tests {
         let s = Settings::from_value(Some(serde_json::json!({
             "connections": {
                 "local": "postgresql:///app",
-                "prod": { "url": "postgresql://u:${PW}@db/app", "read_only": true }
+                "prod": { "url": "postgresql://u:${PW}@db/app", "read_only": true },
+                "remote": { "url": "postgresql:///app?host=/var/run/postgresql", "ssh": "deploy@srv", "ssh_options": ["-p", "2222"] }
             },
             "page_size": 50
         })))
         .unwrap();
         assert_eq!(s.connections["local"].url(), "postgresql:///app");
         assert!(s.connections["prod"].read_only());
+        assert!(s.connections["prod"].ssh().is_none());
+        let (target, opts) = s.connections["remote"].ssh().unwrap();
+        assert_eq!((target, opts.len()), ("deploy@srv", 2));
         assert_eq!(s.page_size, 50);
         assert_eq!(s.max_cell_width, 40);
     }

@@ -12,6 +12,7 @@ use zpg_core::header::quote_ident;
 use zpg_core::{Apply, Column, ForeignKey, QualName, Query, SnapRow, Snapshot};
 
 use crate::config::{Settings, expand_env};
+use crate::tunnel::{self, Remote, Tunnel};
 
 pub fn fmt_err(e: &postgres::Error) -> String {
     match e.as_db_error() {
@@ -75,7 +76,7 @@ mod tls {
     }
 }
 
-fn connect(url: &str, read_only: bool) -> Result<Client, String> {
+fn config(url: &str, read_only: bool) -> Result<Config, String> {
     let url = expand_env(url)?;
     let mut cfg: Config = url.parse().map_err(|e| format!("bad connection url: {e}"))?;
     if cfg.get_connect_timeout().is_none() {
@@ -92,6 +93,46 @@ fn connect(url: &str, read_only: bool) -> Result<Client, String> {
     if read_only {
         cfg.options("-c default_transaction_read_only=on");
     }
+    Ok(cfg)
+}
+
+/// The database the url names, as the SSH server sees it.
+fn remote_of(cfg: &Config) -> Remote {
+    let port = cfg.get_ports().first().copied().unwrap_or(5432);
+    match cfg.get_hosts().first() {
+        Some(Host::Tcp(h)) => Remote::Tcp(h.clone(), port),
+        #[cfg(unix)]
+        Some(Host::Unix(dir)) => Remote::Unix(format!("{}/.s.PGSQL.{port}", dir.display())),
+        _ => Remote::Tcp("localhost".into(), port),
+    }
+}
+
+/// `cfg` pointed at the local end of a tunnel.
+fn through_tunnel(cfg: &Config, port: u16) -> Config {
+    let mut c = Config::new();
+    c.host("127.0.0.1").port(port).ssl_mode(cfg.get_ssl_mode());
+    if let Some(v) = cfg.get_user() {
+        c.user(v);
+    }
+    if let Some(v) = cfg.get_password() {
+        c.password(v);
+    }
+    if let Some(v) = cfg.get_dbname() {
+        c.dbname(v);
+    }
+    if let Some(v) = cfg.get_options() {
+        c.options(v);
+    }
+    if let Some(v) = cfg.get_application_name() {
+        c.application_name(v);
+    }
+    if let Some(v) = cfg.get_connect_timeout() {
+        c.connect_timeout(*v);
+    }
+    c
+}
+
+fn connect(cfg: &Config) -> Result<Client, String> {
     let local = cfg.get_hosts().iter().all(|h| !matches!(h, Host::Tcp(_)));
     let res = if local || cfg.get_ssl_mode() == SslMode::Disable {
         cfg.connect(NoTls)
@@ -111,11 +152,13 @@ fn connect(url: &str, read_only: bool) -> Result<Client, String> {
 #[derive(Default)]
 pub struct Db {
     clients: HashMap<String, Client>,
+    tunnels: HashMap<String, Tunnel>,
 }
 
 impl Db {
     pub fn clear(&mut self) {
         self.clients.clear();
+        self.tunnels.clear();
     }
 
     pub fn client(&mut self, settings: &Settings, conn: &str) -> Result<&mut Client, String> {
@@ -123,8 +166,20 @@ impl Db {
             .connections
             .get(conn)
             .ok_or_else(|| format!("no connection `{conn}` in lsp.zpg.settings.connections"))?;
+        // A dead tunnel means a dead connection, even before a query notices.
+        if spec.ssh().is_some() && !self.tunnels.get_mut(conn).is_some_and(Tunnel::alive) {
+            self.clients.remove(conn);
+        }
         if self.clients.get(conn).is_none_or(|c| c.is_closed()) {
-            let c = connect(spec.url(), spec.read_only())?;
+            let mut cfg = config(spec.url(), spec.read_only())?;
+            if let Some((target, options)) = spec.ssh() {
+                if !self.tunnels.get_mut(conn).is_some_and(Tunnel::alive) {
+                    let t = tunnel::open(&expand_env(target)?, options, &remote_of(&cfg))?;
+                    self.tunnels.insert(conn.to_string(), t);
+                }
+                cfg = through_tunnel(&cfg, self.tunnels[conn].port);
+            }
+            let c = connect(&cfg)?;
             self.clients.insert(conn.to_string(), c);
         }
         Ok(self.clients.get_mut(conn).unwrap())
