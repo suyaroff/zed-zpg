@@ -24,8 +24,8 @@ pub fn render(sections: &[Section]) -> String {
         "{HEADER}\n# Go to definition (F12) on a table opens it; code actions refresh.\n"
     );
     if sections.is_empty() {
-        out += "\n# No connections. Add them to .zed/settings.json:\n\
-                # \"lsp\": { \"zpg\": { \"settings\": { \"connections\": { \"local\": \"postgresql:///mydb?host=/var/run/postgresql\" } } } }\n";
+        out += "\n# No connections. Add them to ~/.config/zpg/config.json (code action: Open settings file):\n\
+                # \"connections\": { \"local\": \"postgresql:///mydb?host=/var/run/postgresql\" }\n";
     }
     for s in sections {
         out += &format!("\n[{}]\n", s.conn);

@@ -1,6 +1,5 @@
 use std::fs;
 
-use zed_extension_api::settings::LspSettings;
 use zed_extension_api::{self as zed, LanguageServerId, LanguageServerInstallationStatus, Result};
 
 const REPO: &str = "suyaroff/zed-zpg";
@@ -35,10 +34,6 @@ fn any_downloaded(exe: &str) -> Option<String> {
         .filter(|n| n.starts_with("zpg-"))
         .map(|dir| format!("{dir}/{BIN}{exe}"))
         .find(|p| is_file(p))
-}
-
-fn settings(worktree: &zed::Worktree) -> Result<Option<zed::serde_json::Value>> {
-    Ok(LspSettings::for_worktree(BIN, worktree)?.settings)
 }
 
 impl ZpgExtension {
@@ -110,21 +105,6 @@ impl zed::Extension for ZpgExtension {
         })
     }
 
-    fn language_server_initialization_options(
-        &mut self,
-        _: &LanguageServerId,
-        worktree: &zed::Worktree,
-    ) -> Result<Option<zed::serde_json::Value>> {
-        settings(worktree)
-    }
-
-    fn language_server_workspace_configuration(
-        &mut self,
-        _: &LanguageServerId,
-        worktree: &zed::Worktree,
-    ) -> Result<Option<zed::serde_json::Value>> {
-        settings(worktree)
-    }
 }
 
 zed::register_extension!(ZpgExtension);

@@ -4,7 +4,7 @@ mod lsp;
 mod state;
 mod tunnel;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use clap::{Parser, Subcommand};
@@ -24,6 +24,12 @@ enum Cmd {
         /// Project root
         #[arg(default_value = ".")]
         dir: PathBuf,
+        /// Zed CLI to launch
+        #[arg(long, env = "ZPG_ZED", default_value = "zed")]
+        zed: String,
+    },
+    /// Create the settings file (~/.config/zpg/config.json) if needed and open it in Zed
+    Config {
         /// Zed CLI to launch
         #[arg(long, env = "ZPG_ZED", default_value = "zed")]
         zed: String,
@@ -55,15 +61,22 @@ fn run(cli: Cli) -> Result<(), String> {
                 // The language server fills it in when Zed opens it.
                 state::atomic_write(&path, format!("{}\n", catalog::HEADER).as_bytes())?;
             }
-            let status = Command::new(&zed)
-                .arg(&path)
-                .status()
-                .map_err(|e| format!("failed to launch `{zed}`: {e}"))?;
-            if !status.success() {
-                return Err(format!("`{zed}` exited with {status}"));
-            }
+            config::ensure_config_file()?;
+            open_in_zed(&zed, &path)?;
         }
+        Cmd::Config { zed } => open_in_zed(&zed, &config::ensure_config_file()?)?,
         Cmd::Lsp => lsp::run().map_err(|e| e.to_string())?,
+    }
+    Ok(())
+}
+
+fn open_in_zed(zed: &str, path: &Path) -> Result<(), String> {
+    let status = Command::new(zed)
+        .arg(path)
+        .status()
+        .map_err(|e| format!("failed to launch `{zed}`: {e}"))?;
+    if !status.success() {
+        return Err(format!("`{zed}` exited with {status}"));
     }
     Ok(())
 }

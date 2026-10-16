@@ -6,10 +6,11 @@ mod values;
 use std::collections::HashMap;
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use lsp_server::{Connection, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::{
-    DidChangeConfiguration, DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument,
+    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument,
     DidSaveTextDocument, Notification as _, PublishDiagnostics, ShowMessage,
 };
 use lsp_types::request::{
@@ -37,7 +38,7 @@ use zpg_core::table::{self, Parsed};
 use zpg_core::{Apply, ForeignKey, Issue, QualName, Query, Severity, Snapshot, record, sql};
 
 use self::edits::minimal_edits;
-use crate::config::Settings;
+use crate::config::{self, Settings};
 use crate::db::{self, Db, Defaults};
 use crate::state;
 
@@ -52,6 +53,7 @@ const CMD_RERUN: &str = "zpg.rerun";
 const CMD_EDIT_RESULT: &str = "zpg.editResult";
 const CMD_DROP: &str = "zpg.drop";
 const CMD_SORT: &str = "zpg.sort";
+const CMD_CONFIG: &str = "zpg.openConfig";
 
 /// How `refresh` changes the page it reloads.
 enum Reload {
@@ -129,6 +131,8 @@ struct Server {
     /// Why the last write of a buffer to the database failed.
     failed: HashMap<String, Issue>,
     settings: Settings,
+    /// When the settings file was last read; `None` when it didn't exist.
+    settings_mtime: Option<SystemTime>,
     db: Db,
     caps: ClientCaps,
     next_id: i32,
@@ -182,6 +186,7 @@ pub fn run() -> Res<()> {
                 CMD_EDIT_RESULT,
                 CMD_DROP,
                 CMD_SORT,
+                CMD_CONFIG,
             ]
                 .map(String::from)
                 .to_vec(),
@@ -215,7 +220,11 @@ pub fn run() -> Res<()> {
         },
         ..Default::default()
     };
-    match Settings::from_value(init.initialization_options) {
+    if let Err(e) = config::ensure_config_file() {
+        show(&conn, MessageType::WARNING, format!("zpg: {e}"))?;
+    }
+    server.settings_mtime = settings_mtime();
+    match config::load() {
         Ok(s) => server.settings = s,
         Err(e) => show(&conn, MessageType::ERROR, format!("zpg: {e}"))?,
     }
@@ -240,6 +249,10 @@ pub fn run() -> Res<()> {
     drop(conn);
     io_threads.join()?;
     Ok(())
+}
+
+fn settings_mtime() -> Option<SystemTime> {
+    std::fs::metadata(config::config_path()?).and_then(|m| m.modified()).ok()
 }
 
 fn uri_to_path(uri: &Uri) -> Option<PathBuf> {
@@ -448,7 +461,34 @@ impl Server {
         Ok(())
     }
 
+    /// Re-reads the settings file when it changed since it was last read.
+    fn reload_settings(&mut self, conn: &Connection) -> Res<()> {
+        let mtime = settings_mtime();
+        if mtime == self.settings_mtime {
+            return Ok(());
+        }
+        self.settings_mtime = mtime;
+        match config::load() {
+            Ok(s) => {
+                self.settings = s;
+                self.db.clear();
+                let catalogs: Vec<String> = self
+                    .docs
+                    .iter()
+                    .filter(|(_, d)| d.kind() == Kind::Catalog)
+                    .map(|(k, _)| k.clone())
+                    .collect();
+                for key in catalogs {
+                    self.refresh_catalog(conn, &key)?;
+                }
+            }
+            Err(e) => show(conn, MessageType::ERROR, format!("zpg: {e}"))?,
+        }
+        Ok(())
+    }
+
     fn notification(&mut self, conn: &Connection, n: Notification) -> Res<()> {
+        self.reload_settings(conn)?;
         match n.method.as_str() {
             DidOpenTextDocument::METHOD => {
                 let p: lsp_types::DidOpenTextDocumentParams = serde_json::from_value(n.params)?;
@@ -500,31 +540,13 @@ impl Server {
                 self.failed.remove(key);
                 notify::<PublishDiagnostics>(conn, PublishDiagnosticsParams::new(p.text_document.uri, vec![], None))?;
             }
-            DidChangeConfiguration::METHOD => {
-                let p: lsp_types::DidChangeConfigurationParams = serde_json::from_value(n.params)?;
-                match Settings::from_value(Some(p.settings)) {
-                    Ok(s) => {
-                        self.settings = s;
-                        self.db.clear();
-                        let catalogs: Vec<String> = self
-                            .docs
-                            .iter()
-                            .filter(|(_, d)| d.kind() == Kind::Catalog)
-                            .map(|(k, _)| k.clone())
-                            .collect();
-                        for key in catalogs {
-                            self.refresh_catalog(conn, &key)?;
-                        }
-                    }
-                    Err(e) => show(conn, MessageType::ERROR, format!("zpg: {e}"))?,
-                }
-            }
             _ => {}
         }
         Ok(())
     }
 
     fn request(&mut self, conn: &Connection, req: Request) -> Res<Value> {
+        self.reload_settings(conn)?;
         match req.method.as_str() {
             GotoDefinition::METHOD => {
                 let p: lsp_types::GotoDefinitionParams = serde_json::from_value(req.params)?;
@@ -623,6 +645,10 @@ impl Server {
                             self.prepare_drop(conn, &key, line)?;
                         }
                     }
+                    CMD_CONFIG => match config::ensure_config_file() {
+                        Ok(path) => self.show_document(conn, &path)?,
+                        Err(e) => show(conn, MessageType::ERROR, format!("zpg: {e}"))?,
+                    },
                     CMD_OPEN | CMD_OPEN_ROW => {
                         if let Some(line) = num(1) {
                             let target = self.definition(&key, Position::new(line, 0));
@@ -1376,6 +1402,9 @@ impl Server {
                     ));
                 }
                 out.push(command("zpg: Refresh catalog".into(), CMD_REFRESH, vec![arg()]));
+                if self.caps.show_document {
+                    out.push(command("zpg: Open settings file".into(), CMD_CONFIG, vec![arg()]));
+                }
                 return out;
             }
             Kind::Row => {

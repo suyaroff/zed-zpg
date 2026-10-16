@@ -70,28 +70,29 @@ zpg позволяет смотреть и править таблицы Postgre
 
 ## Подключения
 
-Подключения задаются для каждого проекта отдельно, в `.zed/settings.json`. Открыть файл: `ctrl-shift-p` → **zed: open project settings**.
+Все настройки zpg лежат в одном файле пользователя — `~/.config/zpg/config.json`, общем для всех проектов. Файл вне проектов, поэтому пароли не попадут в git. `.zed/settings.json` zpg не читает.
 
-```json
+Файл создаётся сам с примерами в комментариях при первом запуске zpg. Открыть его:
+
+- в каталоге: `ctrl-.` → **zpg: Open settings file**;
+- из терминала: `zpg config`.
+
+```jsonc
 {
-  "lsp": {
-    "zpg": {
-      "settings": {
-        "connections": {
-          "local": "postgresql:///mydb?host=/var/run/postgresql",
-          "stage": "postgresql://app:${STAGE_PG_PASSWORD}@stage-db:5432/app",
-          "prod": { "url": "postgresql://app:${PROD_PG_PASSWORD}@prod-db/app", "read_only": true }
-        },
-        "page_size": 100,
-        "max_cell_width": 40,
-        "apply": "manual"
-      }
-    }
-  }
+  "connections": {
+    "local": "postgresql:///mydb?host=/var/run/postgresql",
+    "stage": "postgresql://app:secret@stage-db:5432/app",
+    "prod": { "url": "postgresql://app:secret@prod-db/app", "read_only": true },
+  },
+  "page_size": 100,
+  "max_cell_width": 40,
+  "apply": "manual",
 }
 ```
 
-Изменения в этом файле применяются сразу, перезапускать ничего не нужно. Открытый каталог обновится сам.
+- Можно писать комментарии `//` и `/* */` и оставлять запятую после последнего элемента, как в настройках Zed.
+- Сохранённые изменения применяются при следующем действии в zpg (каталог, таблица, `.sql`), перезапускать ничего не нужно. Открытый каталог обновится сам.
+- Права на файл — `600` (читает только владелец). Другой путь можно задать переменной `ZPG_CONFIG`; по умолчанию учитывается `XDG_CONFIG_HOME`, на Windows файл лежит в `%APPDATA%\zpg\config.json`.
 
 ### Параметры
 
@@ -116,7 +117,7 @@ zpg позволяет смотреть и править таблицы Postgre
 | Без TLS | `postgresql://user@host/mydb?sslmode=disable` |
 
 - Если пользователь не указан, берётся `$USER`.
-- **Пароли.** `${VAR}` подставляется из переменных окружения проекта, например через direnv или окружение, из которого запущен Zed. Так пароль не попадает в файл. Если всё же пишете пароль прямо в файл, не коммитьте `.zed/settings.json`.
+- **Пароли** можно писать прямо в URL: файл настроек лежит вне проектов. Если хочется держать пароль в переменной окружения, работает `${VAR}`: значение берётся из окружения проекта (direnv или окружение, из которого запущен Zed).
 - **TLS.** `sslmode=prefer` (по умолчанию) и `require` шифруют соединение без проверки сертификата, как libpq. `verify-ca` и `verify-full` не поддерживаются.
 - **`read_only: true`** делает все таблицы подключения доступными только для чтения. Транзакции тоже открываются read-only. Включите это для боевых баз.
 
@@ -148,7 +149,7 @@ zpg позволяет смотреть и править таблицы Postgre
 
 ## Быстрый старт
 
-1. Пропишите подключение в `.zed/settings.json` (см. выше).
+1. Пропишите подключение в `~/.config/zpg/config.json` (см. выше).
 2. `ctrl-shift-p` → **task: spawn** → **zpg: open catalog**. Откроется `.zpg/catalog.pgdb` со списком таблиц.
 3. Поставьте курсор на имя таблицы и нажмите **F12** (go to definition). Откроется первая страница таблицы.
 4. Исправьте значение в ячейке и сохраните файл (`ctrl-s`). На первой строке появится `pending: 1 update`.
@@ -447,7 +448,7 @@ update users set active = false where id = 42;
 В просмотре строки: **zpg: Apply changes**, **zpg: Refresh row (discard changes)**.
 В `.sql`: **zpg: Run statement on …**, **zpg: Run selection on …**.
 В результате запроса: **zpg: Edit rows in table**, **zpg: Run again**.
-В каталоге: **zpg: Open <таблица>**, **zpg: Drop <таблица>…** и **zpg: Refresh catalog**.
+В каталоге: **zpg: Open <таблица>**, **zpg: Drop <таблица>…**, **zpg: Refresh catalog** и **zpg: Open settings file**.
 
 ---
 
@@ -469,6 +470,8 @@ update users set active = false where id = 42;
 | `not saved: <ошибка Postgres>` | база отклонила запрос (NOT NULL, FK, unique, тип) | исправьте значение в указанной строке |
 | `no saved state for this file` | файл открыт не из каталога или удалён `.state` | **Refresh** (для таблицы) или откройте заново из каталога |
 | `! …` в каталоге | не удалось подключиться | проверьте строку подключения и переменные окружения |
+| `…/config.json: …` | ошибка в файле настроек (JSON) | исправьте место, указанное в сообщении; до исправления действуют прежние настройки |
+| ``no connection `x` in …`` | в файле таблицы подключение, которого нет в настройках | добавьте его в `~/.config/zpg/config.json` |
 | `environment variable X is not set` | в URL есть `${X}`, а переменной нет | задайте переменную и перезапустите Zed |
 | `ssh to …: Host key verification failed` | сервера нет в `known_hosts` | один раз зайдите на сервер `ssh` из терминала |
 | `ssh to …: Permission denied (publickey…)` | ключ не подошёл или не загружен в agent | `ssh-add`, проверьте `~/.ssh/config`; вход по паролю не поддерживается |

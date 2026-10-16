@@ -11,7 +11,7 @@ use zpg_core::sql::{self, Stmt};
 use zpg_core::header::quote_ident;
 use zpg_core::{Apply, Column, ForeignKey, QualName, Query, SnapRow, Snapshot};
 
-use crate::config::{Settings, expand_env};
+use crate::config::{Settings, config_path, expand_env};
 use crate::tunnel::{self, Remote, Tunnel};
 
 pub fn fmt_err(e: &postgres::Error) -> String {
@@ -165,7 +165,10 @@ impl Db {
         let spec = settings
             .connections
             .get(conn)
-            .ok_or_else(|| format!("no connection `{conn}` in lsp.zpg.settings.connections"))?;
+            .ok_or_else(|| {
+                let file = config_path().map_or("the zpg settings file".into(), |p| p.display().to_string());
+                format!("no connection `{conn}` in {file}")
+            })?;
         // A dead tunnel means a dead connection, even before a query notices.
         if spec.ssh().is_some() && !self.tunnels.get_mut(conn).is_some_and(Tunnel::alive) {
             self.clients.remove(conn);

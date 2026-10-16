@@ -19,27 +19,23 @@ Zed extensions cannot add custom panels, so zpg shows a table as a text buffer a
 
 ## Connections
 
-In the project's `.zed/settings.json` (`zed: open project settings`):
+All zpg settings live in one user file, `~/.config/zpg/config.json`, shared by all projects and kept out of them (and out of git). zpg creates it with commented examples on first start; open it with the catalog code action *Open settings file* or `zpg config`. Zed's `lsp.zpg.settings` is not read.
 
-```json
+```jsonc
 {
-  "lsp": {
-    "zpg": {
-      "settings": {
-        "connections": {
-          "local": "postgresql:///mydb?host=/var/run/postgresql",
-          "prod": { "url": "postgresql://app:${PROD_PG_PASSWORD}@db.example.com/app", "read_only": true }
-        },
-        "page_size": 100,
-        "max_cell_width": 40,
-        "apply": "manual"
-      }
-    }
-  }
+  "connections": {
+    "local": "postgresql:///mydb?host=/var/run/postgresql",
+    "prod": { "url": "postgresql://app:secret@db.example.com/app", "read_only": true },
+  },
+  "page_size": 100,
+  "max_cell_width": 40,
+  "apply": "manual",
 }
 ```
 
-- `${VAR}` is taken from the environment Zed sees for the project, so passwords can stay out of the file. Keep `.zed/settings.json` out of git if it holds secrets.
+- Comments and trailing commas are allowed, as in Zed's settings. Saved changes apply on the next zpg request; an invalid file is reported and the previous settings stay.
+- The file is created with mode `600`. `ZPG_CONFIG` overrides the path; otherwise `XDG_CONFIG_HOME` is honored, and on Windows it is `%APPDATA%\zpg\config.json`.
+- `${VAR}` in a url is taken from the environment Zed sees for the project, if you'd rather keep a password in a variable.
 - `read_only: true` opens every table of the connection read-only, and its transactions are read-only too.
 - TLS: `sslmode=prefer` (default) and `require` encrypt without checking the certificate, like libpq; unix sockets and `sslmode=disable` don't use TLS.
 - SSH: `{ "url": "postgresql:///app?host=/var/run/postgresql", "ssh": "deploy@prod", "ssh_options": ["-p", "2222"] }` tunnels through the system `ssh` (so `~/.ssh/config`, keys, agent and `ProxyJump` apply); the url names the database as the server sees it, a remote unix socket included. Key or agent auth only, and the host must already be in `known_hosts`. A dead tunnel is reopened on the next request.
@@ -94,7 +90,7 @@ Edit the first line and save to reload with new settings:
 
 ## Code actions (`ctrl-.`)
 
-*Apply changes*, *Preview SQL*, *Sort by <column> ↑/↓* (on the column row), *Open row*, *Insert row* (a template with `+`/DEFAULT/NULL filled in), *Next/Previous page*, *Refresh*, *Apply changes manually / on save*. In a row view: *Apply changes*, *Refresh row*. In the catalog: *Open table*, *Drop table…* (opens a `.sql` with the `DROP` to review and run with ▶; the catalog refreshes after DDL run from `.sql`), *Refresh catalog*.
+*Apply changes*, *Preview SQL*, *Sort by <column> ↑/↓* (on the column row), *Open row*, *Insert row* (a template with `+`/DEFAULT/NULL filled in), *Next/Previous page*, *Refresh*, *Apply changes manually / on save*. In a row view: *Apply changes*, *Refresh row*. In the catalog: *Open table*, *Drop table…* (opens a `.sql` with the `DROP` to review and run with ▶; the catalog refreshes after DDL run from `.sql`), *Refresh catalog*, *Open settings file*.
 
 Pending changes are shown as a diagnostic on the header line. Changed cells and new rows are underlined via semantic tokens, which Zed only shows when enabled:
 
