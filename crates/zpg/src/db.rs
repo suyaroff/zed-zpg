@@ -374,3 +374,230 @@ pub fn referenced(
     tx.commit().map_err(|e| fmt_err(&e))?;
     Ok(row.map(|r| names.into_iter().enumerate().map(|(i, n)| (n, r.get(i))).collect()))
 }
+
+/// A column of a query result, with where it comes from (when it's a plain table column).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ResultCol {
+    pub name: String,
+    pub type_name: String,
+    pub table_oid: u32,
+    pub column_id: i16,
+}
+
+#[derive(Debug, Clone)]
+pub struct Outcome {
+    /// e.g. `UPDATE 3`, `SELECT 12`.
+    pub tag: String,
+    pub columns: Vec<ResultCol>,
+    pub rows: Vec<Vec<Option<String>>>,
+    /// More rows existed than were fetched.
+    pub more: bool,
+}
+
+pub struct RunError {
+    /// Index of the failing statement.
+    pub stmt: usize,
+    pub message: String,
+    /// 1-based character position inside that statement.
+    pub position: Option<usize>,
+}
+
+fn run_err(stmt: usize, e: &postgres::Error) -> RunError {
+    let position = e.as_db_error().and_then(|d| match d.position() {
+        Some(postgres::error::ErrorPosition::Original(p)) => Some(*p as usize),
+        _ => None,
+    });
+    RunError {
+        stmt,
+        message: fmt_err(e),
+        position,
+    }
+}
+
+fn first_word(sql: &str) -> String {
+    sql.split_whitespace().next().unwrap_or("").to_uppercase()
+}
+
+/// `UPDATE 3` for statements that count rows, `CREATE TABLE` for the rest.
+fn tag(sql: &str, rows: Option<u64>) -> String {
+    let verb = first_word(sql);
+    match rows {
+        Some(n) if matches!(verb.as_str(), "INSERT" | "UPDATE" | "DELETE" | "MERGE" | "SELECT" | "COPY" | "WITH") => {
+            format!("{verb} {n}")
+        }
+        _ => sql.split_whitespace().take(2).collect::<Vec<_>>().join(" ").to_uppercase(),
+    }
+}
+
+/// Rows of a simple-protocol response, as text, plus the completion count.
+fn simple_rows(msgs: Vec<postgres::SimpleQueryMessage>) -> (Vec<Vec<Option<String>>>, Option<u64>) {
+    let mut rows = vec![];
+    let mut count = None;
+    for m in msgs {
+        match m {
+            postgres::SimpleQueryMessage::Row(r) => {
+                rows.push((0..r.len()).map(|i| r.get(i).map(String::from)).collect());
+            }
+            postgres::SimpleQueryMessage::CommandComplete(n) => count = Some(n),
+            _ => {}
+        }
+    }
+    (rows, count)
+}
+
+/// Runs `stmts` in one transaction and returns what each produced. Row sets
+/// are read through a cursor, so at most `max_rows` are fetched.
+pub fn run(
+    c: &mut Client,
+    stmts: &[&str],
+    read_only: bool,
+    max_rows: usize,
+    timeout_ms: u64,
+) -> Result<Vec<Outcome>, RunError> {
+    match run_in_tx(c, stmts, read_only, max_rows, timeout_ms) {
+        // VACUUM, CREATE INDEX CONCURRENTLY and the like refuse transactions.
+        Err(e) if stmts.len() == 1 && !read_only && e.message.contains("cannot run inside a transaction block") => {
+            let msgs = c.simple_query(stmts[0]).map_err(|e| run_err(0, &e))?;
+            let (_, n) = simple_rows(msgs);
+            Ok(vec![Outcome {
+                tag: tag(stmts[0], n),
+                columns: vec![],
+                rows: vec![],
+                more: false,
+            }])
+        }
+        r => r,
+    }
+}
+
+fn run_in_tx(
+    c: &mut Client,
+    stmts: &[&str],
+    read_only: bool,
+    max_rows: usize,
+    timeout_ms: u64,
+) -> Result<Vec<Outcome>, RunError> {
+    let mut tx = c.build_transaction().read_only(read_only).start().map_err(|e| run_err(0, &e))?;
+    if timeout_ms > 0 {
+        tx.batch_execute(&format!("SET LOCAL statement_timeout = {timeout_ms}"))
+            .map_err(|e| run_err(0, &e))?;
+    }
+    let mut out = vec![];
+    for (k, sql) in stmts.iter().enumerate() {
+        let prepared = tx.prepare(sql).map_err(|e| run_err(k, &e))?;
+        if prepared.columns().is_empty() {
+            let (_, n) = simple_rows(tx.simple_query(sql).map_err(|e| run_err(k, &e))?);
+            out.push(Outcome {
+                tag: tag(sql, n),
+                columns: vec![],
+                rows: vec![],
+                more: false,
+            });
+            continue;
+        }
+        let columns: Vec<ResultCol> = prepared
+            .columns()
+            .iter()
+            .map(|col| ResultCol {
+                name: col.name().to_string(),
+                type_name: col.type_().name().to_string(),
+                table_oid: col.table_oid().unwrap_or(0),
+                column_id: col.column_id().unwrap_or(0),
+            })
+            .collect();
+        // A cursor bounds what's fetched; DML with RETURNING can't be a
+        // cursor, so that falls back to reading everything.
+        tx.batch_execute("SAVEPOINT zpg_run").map_err(|e| run_err(k, &e))?;
+        let mut rows = match tx.batch_execute(&format!("DECLARE zpg_cursor NO SCROLL CURSOR FOR {sql}")) {
+            Ok(()) => {
+                let msgs = tx
+                    .simple_query(&format!("FETCH FORWARD {} FROM zpg_cursor", max_rows + 1))
+                    .map_err(|e| run_err(k, &e))?;
+                tx.batch_execute("CLOSE zpg_cursor; RELEASE SAVEPOINT zpg_run")
+                    .map_err(|e| run_err(k, &e))?;
+                simple_rows(msgs).0
+            }
+            Err(_) => {
+                tx.batch_execute("ROLLBACK TO SAVEPOINT zpg_run").map_err(|e| run_err(k, &e))?;
+                simple_rows(tx.simple_query(sql).map_err(|e| run_err(k, &e))?).0
+            }
+        };
+        let more = rows.len() > max_rows;
+        rows.truncate(max_rows);
+        out.push(Outcome {
+            tag: format!("{} {}{}", first_word(sql), rows.len(), if more { "+" } else { "" }),
+            columns,
+            rows,
+            more,
+        });
+    }
+    tx.commit().map_err(|e| run_err(stmts.len().saturating_sub(1), &e))?;
+    Ok(out)
+}
+
+/// Where an editable result comes from: one table, with its whole key selected.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EditSource {
+    pub table: QualName,
+    /// (table column, result column) for each key column.
+    pub pk: Vec<(String, String)>,
+    /// Table columns that the result shows.
+    pub columns: Vec<String>,
+}
+
+pub fn edit_source(c: &mut Client, cols: &[ResultCol]) -> Option<EditSource> {
+    let oid = cols.first()?.table_oid;
+    if oid == 0 || cols.iter().any(|c| c.table_oid != oid || c.column_id <= 0) {
+        return None;
+    }
+    let mut tx = c.build_transaction().read_only(true).start().ok()?;
+    let rel = tx
+        .query_opt(
+            "SELECT n.nspname::text, c.relname::text FROM pg_class c
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE c.oid = $1 AND c.relkind IN ('r', 'p')",
+            &[&oid],
+        )
+        .ok()??;
+    let names: HashMap<i16, String> = tx
+        .query(
+            "SELECT attnum, attname::text FROM pg_attribute WHERE attrelid = $1 AND attnum > 0",
+            &[&oid],
+        )
+        .ok()?
+        .iter()
+        .map(|r| (r.get(0), r.get(1)))
+        .collect();
+    let pk: Vec<i16> = tx
+        .query(
+            "SELECT unnest(indkey::int2[]) FROM pg_index WHERE indrelid = $1 AND indisprimary",
+            &[&oid],
+        )
+        .ok()?
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    let _ = tx.commit();
+    if pk.is_empty() {
+        return None;
+    }
+    let pk = pk
+        .iter()
+        .map(|a| {
+            let result_col = cols.iter().find(|c| c.column_id == *a)?;
+            Some((names.get(a)?.clone(), result_col.name.clone()))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let mut columns: Vec<String> = vec![];
+    for c in cols {
+        let n = names.get(&c.column_id)?;
+        if !columns.contains(n) {
+            columns.push(n.clone());
+        }
+    }
+    Some(EditSource {
+        table: QualName::new(rel.get::<_, String>(0), rel.get::<_, String>(1)),
+        pk,
+        columns,
+    })
+}

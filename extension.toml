@@ -8,7 +8,7 @@ repository = "https://github.com/suyaroff/zed-zpg"
 
 [language_servers.zpg]
 name = "zpg"
-languages = ["Pg Table", "Pg Catalog", "Pg Row"]
+languages = ["Pg Table", "Pg Catalog", "Pg Row", "Pg Result", "SQL"]
 
 [grammars.zpg]
 repository = "file:///home/jamal/Projects/zed_extentions/database"

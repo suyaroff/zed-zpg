@@ -67,6 +67,15 @@ In the project's `.zed/settings.json` (`zed: open project settings`):
 - `F12` on a primary key cell (or *Open row*) opens the row as `.pgr`, one `column: value` per line. Multi-line text is a block (`note: |` followed by lines indented by two spaces) and jsonb is pretty-printed. It is applied like the table it came from, and the table page is updated afterwards.
 - Completion: NULL/DEFAULT/`+`, booleans and enum labels in cells; column names and keywords inside `where="…"`/`order="…"`; header fields elsewhere.
 
+## Running SQL
+
+zpg also attaches to `.sql` files (install Zed's SQL extension and keep `"code_lens": "on"`):
+
+- Every statement gets a code lens `▶ Run on <conn>` (not in files over 5 MB; a lens clicked before it was redrawn finds its statement again by text, or runs nothing); `-- @conn name` picks the connection for the statements below it (not needed with a single connection). Code actions run the statement under the cursor or the selection (several statements run in one transaction).
+- Rows open in a read-only `.pgres` tab (at most `max_result_rows`, read through a cursor); other statements report their tag, e.g. `UPDATE 3`. Errors roll back and are underlined at the position Postgres reports.
+- If a result comes from one table and includes its key, *Edit rows in table* opens that table's page filtered with `where="id IN (SELECT id FROM (<query>) AS zpg_q)"`.
+- Settings: `max_result_rows` (1000), `statement_timeout_ms` (60000).
+
 ## Header
 
 Edit the first line and save to reload with new settings:

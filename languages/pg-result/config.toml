@@ -1,0 +1,6 @@
+name = "Pg Result"
+grammar = "zpg"
+path_suffixes = ["pgres"]
+line_comments = ["# "]
+tab_size = 2
+brackets = []

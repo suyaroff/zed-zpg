@@ -35,6 +35,10 @@ pub struct Settings {
     pub page_size: u32,
     pub max_cell_width: u32,
     pub apply: ApplySetting,
+    /// Rows shown from a query run from a `.sql` file.
+    pub max_result_rows: usize,
+    /// Per run of `.sql` statements; 0 = no limit.
+    pub statement_timeout_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -61,6 +65,8 @@ impl Default for Settings {
             page_size: 100,
             max_cell_width: 40,
             apply: ApplySetting::Manual,
+            max_result_rows: 1000,
+            statement_timeout_ms: 60_000,
         }
     }
 }
@@ -75,6 +81,7 @@ impl Settings {
         };
         let mut s: Self = serde_json::from_value(v).map_err(|e| format!("invalid lsp.zpg.settings: {e}"))?;
         s.page_size = s.page_size.clamp(1, 10_000);
+        s.max_result_rows = s.max_result_rows.clamp(1, 100_000);
         Ok(s)
     }
 }

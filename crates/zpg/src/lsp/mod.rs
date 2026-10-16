@@ -1,5 +1,6 @@
 mod complete;
 mod edits;
+mod query;
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -11,12 +12,13 @@ use lsp_types::notification::{
     DidSaveTextDocument, Notification as _, PublishDiagnostics, ShowMessage,
 };
 use lsp_types::request::{
-    ApplyWorkspaceEdit, CodeActionRequest, Completion, ExecuteCommand, Formatting, GotoDefinition, HoverRequest,
+    ApplyWorkspaceEdit, CodeActionRequest, CodeLensRequest, Completion, ExecuteCommand, Formatting, GotoDefinition,
+    HoverRequest,
     Request as _, SemanticTokensFullRequest, SemanticTokensRefresh, ShowDocument,
 };
 use lsp_types::{
     ApplyWorkspaceEditParams, CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionProviderCapability,
-    Command, CompletionOptions, CompletionResponse, Diagnostic, DiagnosticSeverity, DocumentChanges,
+    CodeLensOptions, Command, CompletionOptions, CompletionResponse, Diagnostic, DiagnosticSeverity, DocumentChanges,
     ExecuteCommandOptions, GotoDefinitionResponse, Hover, HoverContents, HoverProviderCapability, InitializeParams,
     Location, MarkupContent, MarkupKind, MessageType, OneOf, OptionalVersionedTextDocumentIdentifier, Position,
     PublishDiagnosticsParams, Range, SaveOptions, SemanticToken, SemanticTokenType, SemanticTokens,
@@ -44,6 +46,9 @@ const CMD_APPLY: &str = "zpg.apply";
 const CMD_PREVIEW: &str = "zpg.previewSql";
 const CMD_OPEN: &str = "zpg.open";
 const CMD_OPEN_ROW: &str = "zpg.openRow";
+const CMD_RUN: &str = "zpg.run";
+const CMD_RERUN: &str = "zpg.rerun";
+const CMD_EDIT_RESULT: &str = "zpg.editResult";
 
 type Res<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
@@ -58,6 +63,9 @@ enum Kind {
     Catalog,
     Table,
     Row,
+    Sql,
+    /// `.pgres`: rows returned by a statement run from a `.sql` file.
+    Result,
     Other,
 }
 
@@ -77,6 +85,8 @@ impl Doc {
             Some("pgdb") => Kind::Catalog,
             Some("pgt") => Kind::Table,
             Some("pgr") => Kind::Row,
+            Some("sql" | "pgsql") => Kind::Sql,
+            Some("pgres") => Kind::Result,
             _ => Kind::Other,
         }
     }
@@ -95,12 +105,16 @@ struct ClientCaps {
     document_changes: bool,
     show_document: bool,
     tokens_refresh: bool,
+    code_lens_refresh: bool,
 }
 
 #[derive(Default)]
 struct Server {
     docs: HashMap<String, Doc>,
     snaps: HashMap<PathBuf, Snapshot>,
+    results: HashMap<PathBuf, query::ResultState>,
+    /// First workspace folder, where `.zpg` goes when nothing closer marks a project.
+    root: Option<PathBuf>,
     /// Why the last write of a buffer to the database failed.
     failed: HashMap<String, Issue>,
     settings: Settings,
@@ -141,8 +155,21 @@ pub fn run() -> Res<()> {
             },
         )),
         code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+        code_lens_provider: Some(CodeLensOptions {
+            resolve_provider: Some(false),
+        }),
         execute_command_provider: Some(ExecuteCommandOptions {
-            commands: [CMD_REFRESH, CMD_PAGE, CMD_APPLY, CMD_PREVIEW, CMD_OPEN, CMD_OPEN_ROW]
+            commands: [
+                CMD_REFRESH,
+                CMD_PAGE,
+                CMD_APPLY,
+                CMD_PREVIEW,
+                CMD_OPEN,
+                CMD_OPEN_ROW,
+                CMD_RUN,
+                CMD_RERUN,
+                CMD_EDIT_RESULT,
+            ]
                 .map(String::from)
                 .to_vec(),
             ..Default::default()
@@ -151,12 +178,22 @@ pub fn run() -> Res<()> {
     };
     let init: InitializeParams = serde_json::from_value(conn.initialize(serde_json::to_value(caps)?)?)?;
     let ws = init.capabilities.workspace.unwrap_or_default();
+    #[allow(deprecated)]
+    let root = init
+        .workspace_folders
+        .as_ref()
+        .and_then(|f| f.first())
+        .map(|f| f.uri.clone())
+        .or(init.root_uri.clone())
+        .and_then(|u| uri_to_path(&u));
 
     let mut server = Server {
+        root,
         caps: ClientCaps {
             apply_edit: ws.apply_edit.unwrap_or(false),
             document_changes: ws.workspace_edit.and_then(|w| w.document_changes).unwrap_or(false),
             tokens_refresh: ws.semantic_tokens.and_then(|s| s.refresh_support).unwrap_or(false),
+            code_lens_refresh: ws.code_lens.and_then(|c| c.refresh_support).unwrap_or(false),
             show_document: init
                 .capabilities
                 .window
@@ -252,11 +289,13 @@ fn row_file(key: &[Option<String>]) -> String {
     if enc.chars().count() <= 120 {
         return format!("{enc}.pgr");
     }
-    // FNV-1a: stable across builds, unlike std's hasher.
-    let hash = text
-        .bytes()
-        .fold(0xcbf29ce484222325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100000001b3));
-    format!("{}-{hash:016x}.pgr", enc.chars().take(80).collect::<String>())
+    format!("{}-{:016x}.pgr", enc.chars().take(80).collect::<String>(), fnv(&text))
+}
+
+/// FNV-1a: stable across builds and runs, unlike std's hasher.
+fn fnv(text: &str) -> u64 {
+    text.bytes()
+        .fold(0xcbf29ce484222325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100000001b3))
 }
 
 /// `.zpg/<conn>/schema.table.pgt` -> `.zpg/<conn>/schema.table.rows/`
@@ -424,8 +463,13 @@ impl Server {
                 };
                 doc.text = change.text;
                 doc.version = p.text_document.version;
+                let sql = doc.kind() == Kind::Sql;
                 self.failed.remove(&key);
                 self.publish(conn, &key)?;
+                // ▶ lenses carry statement offsets; redraw them for the new text.
+                if sql && self.caps.code_lens_refresh {
+                    self.send_request::<lsp_types::request::CodeLensRefresh>(conn, ())?;
+                }
             }
             DidSaveTextDocument::METHOD => {
                 let p: lsp_types::DidSaveTextDocumentParams = serde_json::from_value(n.params)?;
@@ -502,7 +546,7 @@ impl Server {
                 let edits = self
                     .docs
                     .get(p.text_document.uri.as_str())
-                    .filter(|d| d.kind() == Kind::Table)
+                    .filter(|d| matches!(d.kind(), Kind::Table | Kind::Result))
                     .and_then(|d| Some(minimal_edits(&d.text, &table::realign(&d.text)?)))
                     .unwrap_or_default();
                 Ok(serde_json::to_value(edits)?)
@@ -514,6 +558,10 @@ impl Server {
                     result_id: None,
                     data,
                 }))?)
+            }
+            CodeLensRequest::METHOD => {
+                let p: lsp_types::CodeLensParams = serde_json::from_value(req.params)?;
+                Ok(serde_json::to_value(self.code_lens(p.text_document.uri.as_str()))?)
             }
             CodeActionRequest::METHOD => {
                 let p: lsp_types::CodeActionParams = serde_json::from_value(req.params)?;
@@ -545,6 +593,13 @@ impl Server {
                         }
                     }
                     CMD_PREVIEW => self.preview(conn, &key)?,
+                    CMD_RUN => {
+                        if let Some(target) = query::RunTarget::from_args(&p.arguments) {
+                            self.run_sql(conn, &key, target)?;
+                        }
+                    }
+                    CMD_RERUN => self.rerun(conn, &key)?,
+                    CMD_EDIT_RESULT => self.edit_result(conn, &key)?,
                     CMD_OPEN | CMD_OPEN_ROW => {
                         if let Some(line) = num(1) {
                             let target = self.definition(&key, Position::new(line, 0));
@@ -776,7 +831,7 @@ impl Server {
                 };
                 self.follow_fk(&table_path, &snap, fk, &values).map(Some)
             }
-            Kind::Other => Ok(None),
+            Kind::Sql | Kind::Result | Kind::Other => Ok(None),
         }
     }
 
@@ -869,8 +924,9 @@ impl Server {
         match kind {
             Kind::Catalog => return self.refresh_catalog(conn, key),
             Kind::Row => return self.refresh_row(conn, key, &path),
+            Kind::Result => return self.rerun(conn, key),
             Kind::Table => {}
-            Kind::Other => return Ok(()),
+            Kind::Sql | Kind::Other => return Ok(()),
         }
         let parsed = table::parse(&text);
         let old = snapshot(&mut self.snaps, &path).cloned();
@@ -1166,6 +1222,9 @@ impl Server {
         let kind = doc.kind();
         let path = doc.path()?;
         let text = doc.text.clone();
+        if kind == Kind::Result {
+            return self.result_hover(&text, &path, pos);
+        }
         let snap = snapshot(&mut self.snaps, &path)?.clone();
         let line = text.split('\n').nth(pos.line as usize)?;
 
@@ -1291,6 +1350,11 @@ impl Server {
                 out.push(command("zpg: Refresh row (discard changes)".into(), CMD_REFRESH, vec![arg()]));
                 return out;
             }
+            Kind::Sql => {
+                let doc = &self.docs[key];
+                return self.sql_actions(doc, key, range);
+            }
+            Kind::Result => return self.result_actions(key, &path),
             Kind::Other => return out,
             Kind::Table => {}
         }
@@ -1376,6 +1440,15 @@ impl Server {
         let Some(path) = doc.path() else {
             return vec![];
         };
+        if kind == Kind::Result {
+            let parsed = table::parse(&text);
+            let spans = parsed
+                .columns
+                .iter()
+                .flat_map(|cols| cols.cells.iter().map(|c| (cols.line, c.start, c.end, TOKEN_COLUMN)))
+                .collect();
+            return encode_tokens(spans);
+        }
         let Some(snap) = snapshot(&mut self.snaps, &path) else {
             return vec![];
         };
@@ -1425,22 +1498,7 @@ impl Server {
             }
             _ => {}
         }
-        spans.retain(|s| s.2 > s.1);
-        spans.sort();
-        let mut out = Vec::with_capacity(spans.len());
-        let (mut prev_line, mut prev_start) = (0, 0);
-        for (line, start, end, typ) in spans {
-            let delta_line = line - prev_line;
-            out.push(SemanticToken {
-                delta_line,
-                delta_start: if delta_line == 0 { start - prev_start } else { start },
-                length: end - start,
-                token_type: typ,
-                token_modifiers_bitset: 0,
-            });
-            (prev_line, prev_start) = (line, start);
-        }
-        out
+        encode_tokens(spans)
     }
 
     fn publish(&mut self, conn: &Connection, key: &str) -> Res<()> {
@@ -1510,6 +1568,7 @@ impl Server {
                     }
                 }
             },
+            (Kind::Result, Some(path)) => issues.extend(self.result_issues(&text, &path)),
             _ => {}
         }
         if let Some(f) = self.failed.get(key) {
@@ -1538,6 +1597,26 @@ impl Server {
         }
         Ok(())
     }
+}
+
+/// LSP's relative encoding of (line, start, end, type) spans.
+fn encode_tokens(mut spans: Vec<(u32, u32, u32, u32)>) -> Vec<SemanticToken> {
+    spans.retain(|s| s.2 > s.1);
+    spans.sort();
+    let mut out = Vec::with_capacity(spans.len());
+    let (mut prev_line, mut prev_start) = (0, 0);
+    for (line, start, end, typ) in spans {
+        let delta_line = line - prev_line;
+        out.push(SemanticToken {
+            delta_line,
+            delta_start: if delta_line == 0 { start - prev_start } else { start },
+            length: end - start,
+            token_type: typ,
+            token_modifiers_bitset: 0,
+        });
+        (prev_line, prev_start) = (line, start);
+    }
+    out
 }
 
 /// The diff's own issues plus a header note listing what saving would write.
