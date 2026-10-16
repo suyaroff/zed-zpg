@@ -139,8 +139,8 @@ zpg позволяет смотреть и править таблицы Postgre
 # Go to definition (F12) on a table opens it; code actions refresh.
 
 [local]
-public.cache             table       ~1200 rows
-public.integration_logs  table       ~84000 rows
+public.audit_log         table       ~84000 rows
+public.sessions          table       ~1200 rows
 public.users             table       ~350 rows
 public.v_active_users    view
 
@@ -315,9 +315,9 @@ comment: |
 
 ```sql
 -- @conn local
-select id, full_name, email from users where blocked_at is null order by id;
+select id, name, email from users where active order by id;
 
-update users set role_id = 3 where id = 42;
+update users set active = false where id = 42;
 ```
 
 ### Подключение
@@ -342,12 +342,12 @@ update users set role_id = 3 where id = 42;
 ### Вкладка результата (.pgres)
 ```
 # zpg v1 result conn=local rows=2 time=4ms
-# select id, full_name, email from users where blocked_at is null order by id
+# select id, name, email from users where active order by id
 # Rows of public.users: code action “Edit rows in table” opens them for editing.
-| id | full_name     | email         |
-|----|---------------|---------------|
-| 1  | Администратор | admin@napp.uz |
-| 2  | Сотрудник     | NULL          |
+| id | name | email            |
+|----|------|------------------|
+| 1  | Anna | anna@example.com |
+| 2  | Bob  | NULL             |
 ```
 - Результат только для чтения. Hover показывает тип колонки и полное значение обрезанной ячейки.
 - `ctrl-.` → **zpg: Run again** (или **Refresh**) перезапускает запрос.
@@ -360,7 +360,7 @@ update users set role_id = 3 where id = 42;
 Первая строка управляет тем, какие строки показаны. Поменяйте её и нажмите `ctrl-s`, страница загрузится заново.
 
 ```
-# zpg v1 conn=local table=public.integration_logs pk=id page=1 limit=200 width=60 apply=manual where="level = 'error'" order="id desc" columns="created_at, level, message"
+# zpg v1 conn=local table=public.audit_log pk=id page=1 limit=200 width=60 apply=manual where="level = 'error'" order="id desc" columns="created_at, level, message"
 ```
 
 | Поле | Что делает | Пример |
@@ -369,7 +369,7 @@ update users set role_id = 3 where id = 42;
 | `limit` | строк на странице, до 10 000 | `limit=500` |
 | `where` | SQL-условие фильтра | `where="created_at > now() - interval '1 day'"` |
 | `order` | SQL-сортировка; по умолчанию по ключу | `order="created_at desc, id"` |
-| `columns` | какие колонки показывать, через запятую; без поля — все | `columns="full_name, email, pinfl"` |
+| `columns` | какие колонки показывать, через запятую; без поля — все | `columns="name, email, phone"` |
 | `width` | ширина обрезки значений, `0` = не обрезать | `width=0` |
 | `apply` | `manual` или `save` | `apply=save` |
 | `conn`, `table`, `pk` | только для информации, менять нельзя | |

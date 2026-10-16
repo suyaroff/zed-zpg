@@ -86,7 +86,7 @@ Edit the first line and save to reload with new settings:
 | `where` | SQL condition, e.g. `where="active and created_at > now() - interval '1 day'"` |
 | `order` | SQL ORDER BY list, e.g. `order="id desc"`; default is the primary key |
 | `width` | max cell width, `0` = no limit |
-| `columns` | columns to show, e.g. `columns="full_name, email"`; key columns are always shown, hidden ones are left alone on write |
+| `columns` | columns to show, e.g. `columns="name, email"`; key columns are always shown, hidden ones are left alone on write |
 | `apply=manual\|save` | `manual` (default) writes only with the code action *Apply changes*; `save` writes on every save |
 
 `conn`, `table` and `pk` are informational.
