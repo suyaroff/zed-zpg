@@ -40,7 +40,7 @@ impl RowHeader {
             .strip_prefix(ROW_MAGIC)
             .ok_or_else(|| format!("first line must start with `{ROW_MAGIC}`"))?;
         let (mut conn, mut table, mut key) = (None, None, String::new());
-        for (k, v) in parse_pairs(rest)? {
+        for (k, v) in parse_pairs(rest, &["conn", "table", "key"])? {
             match k.as_str() {
                 "conn" => conn = Some(v),
                 "table" => table = Some(v.parse::<QualName>()?),

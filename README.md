@@ -85,7 +85,7 @@ Edit the first line and save to reload with new settings:
 |---|---|
 | `page`, `limit` | which rows to show |
 | `where` | SQL condition, e.g. `where="active and created_at > now() - interval '1 day'"` |
-| `order` | SQL ORDER BY list, e.g. `order="id desc"`; default is the primary key |
+| `order` | SQL ORDER BY list, e.g. `order=id desc` (quotes are optional for `where`, `order` and `columns`); default is the primary key |
 | `width` | max cell width, `0` = no limit |
 | `columns` | columns to show, e.g. `columns="name, email"`; key columns are always shown, hidden ones are left alone on write |
 | `apply=manual\|save` | `manual` (default) writes only with the code action *Apply changes*; `save` writes on every save |
@@ -94,7 +94,7 @@ Edit the first line and save to reload with new settings:
 
 ## Code actions (`ctrl-.`)
 
-*Apply changes*, *Preview SQL*, *Open row*, *Insert row* (a template with `+`/DEFAULT/NULL filled in), *Next/Previous page*, *Refresh*, *Apply changes manually / on save*. In a row view: *Apply changes*, *Refresh row*. In the catalog: *Open table*, *Drop table…* (opens a `.sql` with the `DROP` to review and run with ▶; the catalog refreshes after DDL run from `.sql`), *Refresh catalog*.
+*Apply changes*, *Preview SQL*, *Sort by <column> ↑/↓* (on the column row), *Open row*, *Insert row* (a template with `+`/DEFAULT/NULL filled in), *Next/Previous page*, *Refresh*, *Apply changes manually / on save*. In a row view: *Apply changes*, *Refresh row*. In the catalog: *Open table*, *Drop table…* (opens a `.sql` with the `DROP` to review and run with ▶; the catalog refreshes after DDL run from `.sql`), *Refresh catalog*.
 
 Pending changes are shown as a diagnostic on the header line. Changed cells and new rows are underlined via semantic tokens, which Zed only shows when enabled:
 

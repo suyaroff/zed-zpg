@@ -51,6 +51,15 @@ const CMD_RUN: &str = "zpg.run";
 const CMD_RERUN: &str = "zpg.rerun";
 const CMD_EDIT_RESULT: &str = "zpg.editResult";
 const CMD_DROP: &str = "zpg.drop";
+const CMD_SORT: &str = "zpg.sort";
+
+/// How `refresh` changes the page it reloads.
+enum Reload {
+    Same,
+    Page(u32),
+    /// A new `order`, from page 1.
+    Order(String),
+}
 
 type Res<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
@@ -172,6 +181,7 @@ pub fn run() -> Res<()> {
                 CMD_RERUN,
                 CMD_EDIT_RESULT,
                 CMD_DROP,
+                CMD_SORT,
             ]
                 .map(String::from)
                 .to_vec(),
@@ -578,10 +588,15 @@ impl Server {
                 let key = key.clone();
                 let num = |i: usize| p.arguments.get(i).and_then(Value::as_u64).map(|n| n as u32);
                 match p.command.as_str() {
-                    CMD_REFRESH => self.refresh(conn, &key, None)?,
+                    CMD_REFRESH => self.refresh(conn, &key, Reload::Same)?,
+                    CMD_SORT => {
+                        if let Some(order) = p.arguments.get(1).and_then(Value::as_str) {
+                            self.refresh(conn, &key, Reload::Order(order.to_string()))?;
+                        }
+                    }
                     CMD_PAGE => {
                         if let Some(page) = num(1) {
-                            self.refresh(conn, &key, Some(page))?;
+                            self.refresh(conn, &key, Reload::Page(page))?;
                         }
                     }
                     CMD_APPLY => {
@@ -919,8 +934,8 @@ impl Server {
         Ok(path)
     }
 
-    /// Reloads a catalog, table page (another page when `page` is set) or row.
-    fn refresh(&mut self, conn: &Connection, key: &str, page: Option<u32>) -> Res<()> {
+    /// Reloads a catalog, table page (another page or order per `how`) or row.
+    fn refresh(&mut self, conn: &Connection, key: &str, how: Reload) -> Res<()> {
         let Some(doc) = self.docs.get(key) else {
             return Ok(());
         };
@@ -938,12 +953,12 @@ impl Server {
         }
         let parsed = table::parse(&text);
         let old = snapshot(&mut self.snaps, &path).cloned();
-        if page.is_some()
+        if !matches!(how, Reload::Same)
             && let Some(old) = &old
             && !parsed.has_errors()
             && !diff::diff(&parsed, old).ops.is_empty()
         {
-            return show(conn, MessageType::WARNING, "zpg: save or discard changes before switching pages".into());
+            return show(conn, MessageType::WARNING, "zpg: apply or discard changes first".into());
         }
         // The header wins, so a refresh also works when the saved state is gone.
         let (conn_name, table, mut query, width, apply, visible) = match (&parsed.header, &old) {
@@ -951,8 +966,16 @@ impl Server {
             (None, Some(o)) => (o.conn.clone(), o.table.clone(), o.query.clone(), o.width, o.apply, o.visible.clone()),
             (None, None) => return show(conn, MessageType::ERROR, "zpg: fix the header line first".into()),
         };
+        let page = match how {
+            Reload::Same => None,
+            Reload::Page(p) => Some(p.max(1)),
+            Reload::Order(o) => {
+                query.order = o;
+                Some(1)
+            }
+        };
         if let Some(p) = page {
-            query.page = p.max(1);
+            query.page = p;
         }
         let d = self.defaults(&conn_name, query, width, apply, visible);
         let snap = match self.load_table(&path, &conn_name, &table, &d) {
@@ -1389,6 +1412,19 @@ impl Server {
             && row_of_line(snap, line).is_some()
         {
             out.push(command("zpg: Open row".into(), CMD_OPEN_ROW, vec![arg(), Value::from(range.start.line)]));
+        }
+        if let Some(cols) = &parsed.columns
+            && cols.line == range.start.line
+            && let Some(line) = text.split('\n').nth(cols.line as usize)
+            && let Some(i) = column_at(snap, line, range.start.character)
+        {
+            let name = zpg_core::header::display_ident(&snap.columns[i].name);
+            let current = parsed.header.as_ref().map_or(snap.query.order.clone(), |h| h.query.order.clone());
+            for (arrow, order) in [("↑", name.clone()), ("↓", format!("{name} desc"))] {
+                if current.trim() != order {
+                    out.push(command(format!("zpg: Sort by {name} {arrow}"), CMD_SORT, vec![arg(), Value::from(order)]));
+                }
+            }
         }
         if snap.read_only.is_none() {
             out.push(insert_row(uri, &parsed, snap, range.start.line));

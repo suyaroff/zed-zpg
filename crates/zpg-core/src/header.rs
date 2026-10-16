@@ -160,8 +160,14 @@ pub fn quote_value(v: &str) -> String {
     format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-/// Splits `key=value key="quoted value"` pairs.
-pub fn parse_pairs(s: &str) -> Result<Vec<(String, String)>, String> {
+/// Header fields whose unquoted value may have spaces: it runs up to the
+/// next ` field=`, so `order=id desc` needs no quotes.
+const SPACED: &[&str] = &["where", "order", "columns"];
+const TABLE_FIELDS: &[&str] = &["conn", "table", "pk", "page", "limit", "width", "apply", "where", "order", "columns"];
+
+/// Splits `key=value key="quoted value"` pairs; unquoted values of
+/// `SPACED` keys extend to the next ` known=`.
+pub fn parse_pairs(s: &str, known: &[&str]) -> Result<Vec<(String, String)>, String> {
     let mut out = vec![];
     let mut it = s.chars().peekable();
     loop {
@@ -196,6 +202,13 @@ pub fn parse_pairs(s: &str) -> Result<Vec<(String, String)>, String> {
                     None => return Err(format!("unterminated value of `{key}`")),
                 }
             }
+        } else if SPACED.contains(&key.as_str()) {
+            let rest: String = it.clone().collect();
+            let end = next_field(&rest, known).unwrap_or(rest.len());
+            val = rest[..end].trim_end().to_string();
+            for _ in rest[..end].chars() {
+                it.next();
+            }
         } else {
             while let Some(&c) = it.peek() {
                 if c.is_whitespace() {
@@ -207,6 +220,15 @@ pub fn parse_pairs(s: &str) -> Result<Vec<(String, String)>, String> {
         }
         out.push((key, val));
     }
+}
+
+/// Byte offset of the whitespace before the next ` known=` in `s`.
+fn next_field(s: &str, known: &[&str]) -> Option<usize> {
+    s.char_indices().find_map(|(i, c)| {
+        let after = s[i..].trim_start();
+        let starts = c.is_whitespace() && known.iter().any(|k| after.strip_prefix(k).is_some_and(|r| r.starts_with('=')));
+        starts.then_some(i)
+    })
 }
 
 impl TableHeader {
@@ -258,7 +280,7 @@ impl TableHeader {
             columns: vec![],
         };
         let num = |k: &str, v: &str| v.parse::<u32>().map_err(|_| format!("`{k}` must be a number, got `{v}`"));
-        for (k, v) in parse_pairs(rest)? {
+        for (k, v) in parse_pairs(rest, TABLE_FIELDS)? {
             match k.as_str() {
                 "conn" => conn = Some(v),
                 "table" => table = Some(v.parse::<QualName>()?),
@@ -312,6 +334,18 @@ mod tests {
         let line = h.render();
         assert!(line.ends_with(r#" columns="id, \"Full Name\"""#), "{line}");
         assert_eq!(TableHeader::parse(&line).unwrap(), h);
+    }
+
+    #[test]
+    fn unquoted_spaced_values() {
+        let h = TableHeader::parse("# zpg v1 conn=c table=public.t order=id desc where=a = 'x y' and b > 2 page=2").unwrap();
+        assert_eq!(h.query.order, "id desc");
+        assert_eq!(h.query.filter, "a = 'x y' and b > 2");
+        assert_eq!(h.query.page, 2);
+        let h = TableHeader::parse("# zpg v1 conn=c table=public.t apply=manual order=name").unwrap();
+        assert_eq!((h.query.order.as_str(), h.apply), ("name", Apply::Manual));
+        assert!(h.render().ends_with("order=name"));
+        assert!(TableHeader::parse("# zpg v1 conn=c table=public.t order=id desc").unwrap().render().contains(r#"order="id desc""#));
     }
 
     #[test]
