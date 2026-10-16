@@ -290,6 +290,7 @@ mod tests {
             },
             width: 0,
             apply: Apply::Save,
+            visible: vec![],
             rows: vec![SnapRow {
                 xmin: Some("1".into()),
                 values: values.into_iter().map(|v| v.map(Into::into)).collect(),

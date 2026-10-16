@@ -173,6 +173,7 @@ pub struct Defaults {
     pub query: Query,
     pub width: u32,
     pub apply: Apply,
+    pub visible: Vec<String>,
     pub read_only_conn: bool,
 }
 
@@ -269,6 +270,7 @@ pub fn load(c: &mut Client, conn: &str, table: &QualName, d: &Defaults) -> Resul
         query: d.query.clone(),
         width: d.width,
         apply: d.apply,
+        visible: d.visible.clone(),
         rows: vec![],
     };
     snap.rows = fetch(c, &snap, &snap.query)?;

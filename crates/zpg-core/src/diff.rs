@@ -3,6 +3,9 @@
 //! A row whose key isn't in the snapshot (or has `+`/DEFAULT in a key cell) is
 //! inserted; a snapshot row missing from the buffer is deleted. So editing a key
 //! value means delete + insert.
+//!
+//! Buffer cells map to `Snapshot::shown()` columns; hidden columns are left
+//! alone (and get their defaults in inserted rows).
 
 use std::collections::HashMap;
 
@@ -74,10 +77,19 @@ fn cell_issue(line: u32, c: &crate::table::CellRef, msg: impl Into<String>) -> I
 pub fn diff(parsed: &Parsed, snap: &Snapshot) -> Diff {
     let mut d = Diff::default();
     let ncols = snap.columns.len();
+    let shown = snap.shown();
+    let ncells = shown.len();
+    let widths = snap.widths();
+    // Cell index of each key column.
+    let key_cells: Vec<usize> = snap
+        .pk
+        .iter()
+        .filter_map(|k| shown.iter().position(|c| c == k))
+        .collect();
 
     if let Some(cols) = &parsed.columns {
         let names: Vec<Value> = cols.cells.iter().map(|c| cell::parse(&c.text).unwrap_or(Value::Null)).collect();
-        let expected: Vec<Value> = snap.columns.iter().map(|c| Value::Text(c.name.clone())).collect();
+        let expected: Vec<Value> = snap.column_names().into_iter().map(Value::Text).collect();
         if names != expected {
             d.issues.push(Issue::error(
                 cols.line,
@@ -91,13 +103,13 @@ pub fn diff(parsed: &Parsed, snap: &Snapshot) -> Diff {
 
     let mut rows: Vec<&Line> = vec![];
     for row in &parsed.rows {
-        if row.cells.len() != ncols {
+        if row.cells.len() != ncells {
             let end = row.cells.last().map_or(1, |c| c.end + 2);
             d.issues.push(Issue::error(
                 row.line,
                 0,
                 end,
-                format!("row has {} cells, table has {ncols} columns", row.cells.len()),
+                format!("row has {} cells, the page shows {ncells} columns", row.cells.len()),
             ));
         } else {
             rows.push(row);
@@ -110,7 +122,7 @@ pub fn diff(parsed: &Parsed, snap: &Snapshot) -> Diff {
     if let Some(why) = &snap.read_only {
         let same = rows.len() == snap.rows.len()
             && rows.iter().zip(&snap.rows).all(|(r, s)| {
-                r.cells.iter().zip(&s.values).enumerate().all(|(i, (c, v))| c.text == snap.cell(i, v).0)
+                r.cells.iter().zip(&shown).all(|(c, &i)| c.text == snap.cell(i, &s.values[i], &widths).0)
             });
         if !same {
             d.issues.push(Issue::error(0, 0, 8, format!("read-only: {why}; edits won't be saved")));
@@ -121,18 +133,19 @@ pub fn diff(parsed: &Parsed, snap: &Snapshot) -> Diff {
 
     let mut by_key: HashMap<Vec<String>, usize> = HashMap::new();
     for (i, r) in snap.rows.iter().enumerate() {
-        by_key.insert(snap.pk.iter().map(|&c| snap.cell(c, &r.values[c]).0).collect(), i);
+        by_key.insert(snap.pk.iter().map(|&c| snap.cell(c, &r.values[c], &widths).0).collect(), i);
     }
     let mut seen = vec![false; snap.rows.len()];
 
     for row in rows {
-        let key: Vec<String> = snap.pk.iter().map(|&c| row.cells[c].text.clone()).collect();
+        let key: Vec<String> = key_cells.iter().map(|&k| row.cells[k].text.clone()).collect();
         let new = key.iter().any(|k| k == "+" || k == "DEFAULT");
         let found = if new { None } else { by_key.get(&key).copied() };
 
-        let mut values = Vec::with_capacity(ncols);
+        // Per column; hidden ones stay DEFAULT.
+        let mut values = vec![Value::Default; ncols];
         let mut bad = false;
-        for (i, c) in row.cells.iter().enumerate() {
+        for (c, &i) in row.cells.iter().zip(&shown) {
             match cell::parse(&c.text) {
                 Ok(Value::Plus) if !snap.pk.contains(&i) => {
                     d.issues.push(cell_issue(row.line, c, "`+` is only allowed in key columns"));
@@ -142,7 +155,7 @@ pub fn diff(parsed: &Parsed, snap: &Snapshot) -> Diff {
                     d.issues.push(cell_issue(row.line, c, "key column can't be NULL"));
                     bad = true;
                 }
-                Ok(v) => values.push(v),
+                Ok(v) => values[i] = v,
                 Err(e) => {
                     d.issues.push(cell_issue(row.line, c, e));
                     bad = true;
@@ -155,18 +168,18 @@ pub fn diff(parsed: &Parsed, snap: &Snapshot) -> Diff {
 
         match found {
             Some(i) if seen[i] => {
-                let c = &row.cells[snap.pk[0]];
+                let c = &row.cells[key_cells[0]];
                 d.issues.push(cell_issue(row.line, c, "duplicate key: this row appears twice"));
             }
             Some(i) => {
                 seen[i] = true;
                 let snap_row = &snap.rows[i];
                 let mut sets = vec![];
-                for (j, c) in row.cells.iter().enumerate() {
+                for (c, &j) in row.cells.iter().zip(&shown) {
                     if snap.pk.contains(&j) {
                         continue;
                     }
-                    let (text, was_cut) = snap.cell(j, &snap_row.values[j]);
+                    let (text, was_cut) = snap.cell(j, &snap_row.values[j], &widths);
                     if c.text == text {
                         continue;
                     }
@@ -174,7 +187,7 @@ pub fn diff(parsed: &Parsed, snap: &Snapshot) -> Diff {
                         d.issues.push(cell_issue(
                             row.line,
                             c,
-                            format!("value is cut to width={}; raise `width` in the header to edit it", snap.width),
+                            "value is cut to fit the line; edit it in the row view (F12 on the key) or raise `width`",
                         ));
                         continue;
                     }
@@ -203,10 +216,25 @@ pub fn diff(parsed: &Parsed, snap: &Snapshot) -> Diff {
                     .into_iter()
                     .map(|v| if v == Value::Plus { Value::Default } else { v })
                     .collect();
-                for (j, c) in row.cells.iter().enumerate() {
+                for (c, &j) in row.cells.iter().zip(&shown) {
                     if snap.columns[j].generated && values[j] != Value::Default {
                         d.issues.push(cell_issue(row.line, c, "generated column: only DEFAULT can be written"));
                     }
+                }
+                let required: Vec<&str> = (0..ncols)
+                    .filter(|j| !shown.contains(j))
+                    .map(|j| &snap.columns[j])
+                    .filter(|c| c.not_null && !c.has_default && !c.generated)
+                    .map(|c| c.name.as_str())
+                    .collect();
+                if !required.is_empty() {
+                    let end = row.cells.last().map_or(1, |c| c.end + 2);
+                    d.issues.push(Issue::error(
+                        row.line,
+                        0,
+                        end,
+                        format!("a new row needs {}: add to `columns=` in the header", required.join(", ")),
+                    ));
                 }
                 d.order.push(Source::Op(d.ops.len()));
                 d.ops.push(Op::Insert { line: row.line, values });
@@ -259,6 +287,7 @@ mod tests {
             },
             width: 10,
             apply: Apply::Save,
+            visible: vec![],
             rows: vec![row("1", Some("a")), row("2", None), row("3", Some("very long value"))],
         }
     }
@@ -319,6 +348,52 @@ mod tests {
         s.rows[1].values[0] = Some("cache-0c8a518a715046b604d39cc8be47e768".into());
         let text = s.render();
         assert!(text.contains("e767") && text.contains("e768"), "{text}");
+        let d = diff(&table::parse(&text), &s);
+        assert!(d.ops.is_empty() && d.issues.is_empty(), "{d:?}");
+    }
+
+    #[test]
+    fn hidden_columns_are_left_alone() {
+        let mut s = snap();
+        s.columns.push(col("secret", false));
+        for r in &mut s.rows {
+            r.values.push(Some("hidden".into()));
+        }
+        s.visible = vec!["name".into()];
+        let text = s.render();
+        assert!(!text.contains("secret") && !text.contains("hidden"), "{text}");
+        let edited = text.replace("| a          |", "| b |") + "| + | new |\n";
+        let d = diff(&table::parse(&edited), &s);
+        assert!(d.issues.is_empty(), "{:?}", d.issues);
+        assert_eq!(
+            d.ops,
+            vec![
+                Op::Update {
+                    line: 3,
+                    row: 0,
+                    sets: vec![(1, Value::Text("b".into()))]
+                },
+                Op::Insert {
+                    line: 6,
+                    values: vec![Value::Default, Value::Text("new".into()), Value::Default]
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn wide_tables_fit_the_line_limit() {
+        let mut s = snap();
+        s.width = 0;
+        for k in 0..30 {
+            s.columns.push(col(&format!("c{k}"), false));
+            for r in &mut s.rows {
+                r.values.push(Some("x".repeat(60)));
+            }
+        }
+        let text = s.render();
+        let longest = text.lines().skip(1).map(crate::cell::display_width).max().unwrap();
+        assert!(longest <= crate::snapshot::MAX_LINE, "{longest}");
         let d = diff(&table::parse(&text), &s);
         assert!(d.ops.is_empty() && d.issues.is_empty(), "{d:?}");
     }

@@ -185,6 +185,7 @@ mod tests {
             },
             width: 40,
             apply: Apply::Save,
+            visible: vec![],
             rows: vec![SnapRow {
                 xmin: Some("77".into()),
                 values: vec![Some("5".into()), Some("x".into())],

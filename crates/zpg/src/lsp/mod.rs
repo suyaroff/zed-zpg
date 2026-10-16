@@ -320,13 +320,41 @@ fn cell_at(line: &str, ch: u32) -> Option<usize> {
     table::split(line).iter().rposition(|c| c.start <= ch + 1)
 }
 
+/// Column shown in the cell under UTF-16 column `ch`.
+fn column_at(snap: &Snapshot, line: &str, ch: u32) -> Option<usize> {
+    snap.shown().get(cell_at(line, ch)?).copied()
+}
+
 /// The snapshot row a buffer line stands for, matched by its key cells.
 fn row_of_line(snap: &Snapshot, line: &str) -> Option<usize> {
     let cells = table::split(line);
-    if cells.len() != snap.columns.len() || snap.pk.is_empty() {
+    let shown = snap.shown();
+    if cells.len() != shown.len() || snap.pk.is_empty() {
         return None;
     }
-    snap.rows.iter().position(|r| snap.pk.iter().all(|&k| snap.cell(k, &r.values[k]).0 == cells[k].text))
+    let widths = snap.widths();
+    snap.rows.iter().position(|r| {
+        snap.pk.iter().all(|&k| {
+            shown
+                .iter()
+                .position(|&c| c == k)
+                .is_some_and(|cell| snap.cell(k, &r.values[k], &widths).0 == cells[cell].text)
+        })
+    })
+}
+
+/// Value of column `col` on a buffer line: the cell when shown, else the
+/// loaded value of that row.
+fn line_value(snap: &Snapshot, line: &str, col: usize) -> Option<CellValue> {
+    let cells = table::split(line);
+    let shown = snap.shown();
+    if cells.len() != shown.len() {
+        return None;
+    }
+    match shown.iter().position(|&c| c == col) {
+        Some(k) => cell::parse(&cells[k].text).ok(),
+        None => row_of_line(snap, line).map(|r| CellValue::from_db(snap.rows[r].values[col].as_deref())),
+    }
 }
 
 /// Text values of the FK columns, if all are plain values.
@@ -645,11 +673,12 @@ impl Server {
         self.replace_doc(conn, key, catalog::render(&sections))
     }
 
-    fn defaults(&self, conn: &str, query: Query, width: u32, apply: Apply) -> Defaults {
+    fn defaults(&self, conn: &str, query: Query, width: u32, apply: Apply, visible: Vec<String>) -> Defaults {
         Defaults {
             query,
             width,
             apply,
+            visible,
             read_only_conn: self.settings.connections.get(conn).is_some_and(|c| c.read_only()),
         }
     }
@@ -680,7 +709,7 @@ impl Server {
             filter: String::new(),
             order: String::new(),
         };
-        let d = self.defaults(conn, query, self.settings.max_cell_width, self.settings.apply.into());
+        let d = self.defaults(conn, query, self.settings.max_cell_width, self.settings.apply.into(), vec![]);
         let snap = self.load_table(&path, conn, table, &d)?;
         state::atomic_write(&path, snap.render().as_bytes())?;
         Ok(path)
@@ -712,12 +741,11 @@ impl Server {
                 if pos.line == 0 {
                     return Ok(None);
                 }
-                let cells = table::split(&line);
-                let Some(i) = cell_at(&line, pos.character) else {
+                let Some(i) = column_at(&snap, &line, pos.character) else {
                     return Ok(None);
                 };
                 if let Some(fk) = snap.foreign_keys.iter().find(|f| f.columns.contains(&i)) {
-                    let values = fk_values(fk, |c| cells.get(c).and_then(|c| cell::parse(&c.text).ok()));
+                    let values = fk_values(fk, |c| line_value(&snap, &line, c));
                     return match values {
                         Some(v) => self.follow_fk(&path, &snap, fk, &v).map(Some),
                         None => Ok(None),
@@ -778,17 +806,35 @@ impl Server {
             filter,
             ..target.query.clone()
         };
-        let d = self.defaults(&target.conn, query, target.width, target.apply);
+        let d = self.defaults(&target.conn, query, target.width, target.apply, target.visible.clone());
         let loaded = self.load_table(&path, &target.conn, &target.table, &d)?;
         self.pending_writes.push((path.clone(), loaded.render()));
         Ok(path)
     }
 
-    /// Writes the row's `.pgr` (unless it has unsaved edits) and returns its path.
+    /// True when the row view has edits not yet in the database, saved or not
+    /// (with `apply=manual` a saved file can still hold them).
+    fn row_has_local_edits(&mut self, path: &Path) -> bool {
+        let text = match self.doc_key(path) {
+            Some(k) if !self.docs[&k].is_clean() => return true,
+            Some(k) => self.docs[&k].text.clone(),
+            None => match std::fs::read_to_string(path) {
+                Ok(t) => t,
+                Err(_) => return false,
+            },
+        };
+        let Some(snap) = snapshot(&mut self.snaps, path) else {
+            return false;
+        };
+        let parsed = record::parse(&text, snap);
+        !parsed.issues.is_empty() || !record::diff(&parsed, snap).ops.is_empty()
+    }
+
+    /// Writes the row's `.pgr` (unless it holds edits not yet in the database) and returns its path.
     fn open_row(&mut self, table_path: &Path, snap: &Snapshot, row: usize) -> Result<PathBuf, String> {
         let key = snap.pk.iter().map(|&k| snap.rows[row].values[k].clone()).collect::<Vec<_>>();
         let path = rows_dir(table_path).join(row_file(&key));
-        if self.doc_key(&path).is_some_and(|k| !self.docs[&k].is_clean()) {
+        if self.row_has_local_edits(&path) {
             return Ok(path);
         }
         let client = self.db.client(&self.settings, &snap.conn)?;
@@ -836,15 +882,15 @@ impl Server {
             return show(conn, MessageType::WARNING, "zpg: save or discard changes before switching pages".into());
         }
         // The header wins, so a refresh also works when the saved state is gone.
-        let (conn_name, table, mut query, width, apply) = match (&parsed.header, &old) {
-            (Some(h), _) => (h.conn.clone(), h.table.clone(), h.query.clone(), h.width, h.apply),
-            (None, Some(o)) => (o.conn.clone(), o.table.clone(), o.query.clone(), o.width, o.apply),
+        let (conn_name, table, mut query, width, apply, visible) = match (&parsed.header, &old) {
+            (Some(h), _) => (h.conn.clone(), h.table.clone(), h.query.clone(), h.width, h.apply, h.columns.clone()),
+            (None, Some(o)) => (o.conn.clone(), o.table.clone(), o.query.clone(), o.width, o.apply, o.visible.clone()),
             (None, None) => return show(conn, MessageType::ERROR, "zpg: fix the header line first".into()),
         };
         if let Some(p) = page {
             query.page = p.max(1);
         }
-        let d = self.defaults(&conn_name, query, width, apply);
+        let d = self.defaults(&conn_name, query, width, apply, visible);
         let snap = match self.load_table(&path, &conn_name, &table, &d) {
             Ok(s) => s,
             Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),
@@ -941,7 +987,7 @@ impl Server {
             self.publish(conn, key)?;
             return not_saved(conn);
         };
-        if header.conn != snap.conn || header.table != snap.table {
+        if header.conn != snap.conn || header.table != snap.table || !snap.unknown_visible(&header.columns).is_empty() {
             self.publish(conn, key)?;
             return not_saved(conn);
         }
@@ -975,8 +1021,10 @@ impl Server {
             summary = Some(d.summary());
         }
 
-        if header.query != snap.query || header.width != snap.width {
-            new.width = header.width;
+        // `width` and `columns` only change how the loaded rows are drawn.
+        new.width = header.width;
+        new.visible = header.columns.clone();
+        if header.query != snap.query {
             let fetched = self
                 .db
                 .client(&self.settings, &snap.conn)
@@ -1123,22 +1171,19 @@ impl Server {
 
         let md = match kind {
             Kind::Table if pos.line > 0 => {
-                let i = cell_at(line, pos.character)?;
-                snap.columns.get(i)?;
+                let i = column_at(&snap, line, pos.character)?;
                 let mut md = column_md(&snap, i);
-                let cells = table::split(line);
-                if cells.len() == snap.columns.len() {
-                    if let Some(r) = row_of_line(&snap, line)
-                        && let Some(v) = &snap.rows[r].values[i]
-                        && snap.cell(i, &snap.rows[r].values[i]).1
-                    {
-                        md += &format!("\n\n```\n{v}\n```");
-                    }
-                    if let Some(fk) = snap.foreign_keys.iter().find(|f| f.columns.contains(&i))
-                        && let Some(values) = fk_values(fk, |c| cell::parse(&cells[c].text).ok())
-                    {
-                        md += &self.referenced_md(&snap, fk, &values);
-                    }
+                if pos.line > 1
+                    && let Some(r) = row_of_line(&snap, line)
+                    && let Some(v) = &snap.rows[r].values[i]
+                    && snap.cell(i, &snap.rows[r].values[i], &snap.widths()).1
+                {
+                    md += &format!("\n\n```\n{v}\n```");
+                }
+                if let Some(fk) = snap.foreign_keys.iter().find(|f| f.columns.contains(&i))
+                    && let Some(values) = fk_values(fk, |c| line_value(&snap, line, c))
+                {
+                    md += &self.referenced_md(&snap, fk, &values);
                 }
                 md
             }
@@ -1185,13 +1230,16 @@ impl Server {
                 let Some(i) = cell_at(line, pos.character) else {
                     return vec![];
                 };
+                let Some(&col) = snap.shown().get(i) else {
+                    return vec![];
+                };
                 let c = &cells[i];
                 let range = if pos.character >= c.start && pos.character <= c.end.max(c.start) {
                     Range::new(Position::new(pos.line, c.start), Position::new(pos.line, c.end.max(pos.character)))
                 } else {
                     Range::new(pos, pos)
                 };
-                complete::values(snap, i, range)
+                complete::values(snap, col, range)
             }
             Kind::Row => {
                 let parsed = record::parse(&text, snap);
@@ -1345,7 +1393,12 @@ impl Server {
                         match op {
                             diff::Op::Update { line, sets, .. } => {
                                 if let Some(cells) = cells_of(line) {
-                                    spans.extend(sets.iter().map(|(i, _)| (line, cells[*i].start, cells[*i].end, TOKEN_MODIFIED)));
+                                    let shown = snap.shown();
+                                    for (col, _) in &sets {
+                                        if let Some(c) = shown.iter().position(|s| s == col).and_then(|k| cells.get(k)) {
+                                            spans.push((line, c.start, c.end, TOKEN_MODIFIED));
+                                        }
+                                    }
                                 }
                             }
                             diff::Op::Insert { line, .. } => {
@@ -1418,9 +1471,31 @@ impl Server {
                                 format!("`conn` and `table` must stay {} / {}", snap.conn, snap.table),
                             ));
                         }
+                        if let Some(h) = &parsed.header {
+                            let unknown = snap.unknown_visible(&h.columns);
+                            if !unknown.is_empty() {
+                                issues.push(Issue::error(0, 0, 8, format!("`columns`: no such column {}", unknown.join(", "))));
+                            }
+                        }
                         let d = diff::diff(&parsed, snap);
                         let manual = parsed.header.as_ref().is_some_and(|h| h.apply == Apply::Manual);
                         issues.extend(pending(&d, manual));
+                        // Zed wraps lines over 512 columns no matter what, and cutting values didn't help.
+                        let longest = text.lines().skip(1).map(cell::display_width).max().unwrap_or(0);
+                        if longest > 512
+                            && let Some(cols) = &parsed.columns
+                        {
+                            issues.push(Issue {
+                                line: cols.line,
+                                start: 0,
+                                end: 1,
+                                severity: Severity::Info,
+                                message: format!(
+                                    "rows are {longest} characters and Zed wraps lines over 512; \
+                                     pick columns with `columns=\"…\"` in the header"
+                                ),
+                            });
+                        }
                     }
                     Some(_) => {}
                 }

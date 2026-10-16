@@ -78,6 +78,18 @@ impl std::str::FromStr for QualName {
     }
 }
 
+/// `a, "B c", d` -> names; unquoted names are folded to lower case.
+pub fn parse_ident_list(s: &str) -> Result<Vec<String>, String> {
+    s.split_terminator(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(|p| match parse_ident(p) {
+            Some((name, n)) if n == p.len() => Ok(name),
+            _ => Err(format!("`{p}` is not a column name")),
+        })
+        .collect()
+}
+
 fn parse_ident(s: &str) -> Option<(String, usize)> {
     if let Some(rest) = s.strip_prefix('"') {
         let mut out = String::new();
@@ -137,6 +149,8 @@ pub struct TableHeader {
     /// Max display width of a cell; longer values are cut and become read-only. 0 = no limit.
     pub width: u32,
     pub apply: Apply,
+    /// Columns to show; empty = all. Key columns are always shown.
+    pub columns: Vec<String>,
 }
 
 pub fn quote_value(v: &str) -> String {
@@ -216,6 +230,10 @@ impl TableHeader {
         if !self.query.order.is_empty() {
             s += &format!(" order={}", quote_value(&self.query.order));
         }
+        if !self.columns.is_empty() {
+            let names: Vec<String> = self.columns.iter().map(|c| display_ident(c)).collect();
+            s += &format!(" columns={}", quote_value(&names.join(", ")));
+        }
         s
     }
 
@@ -237,6 +255,7 @@ impl TableHeader {
             },
             width: 40,
             apply: Apply::Manual,
+            columns: vec![],
         };
         let num = |k: &str, v: &str| v.parse::<u32>().map_err(|_| format!("`{k}` must be a number, got `{v}`"));
         for (k, v) in parse_pairs(rest)? {
@@ -248,7 +267,9 @@ impl TableHeader {
                 "limit" => h.query.limit = num(&k, &v)?.clamp(1, 10_000),
                 "width" => h.width = num(&k, &v)?,
                 "where" => h.query.filter = v,
-                "order" => h.query.order = v,
+                // `sort` is what people try first; it's written back as `order`.
+                "order" | "sort" => h.query.order = v,
+                "columns" => h.columns = parse_ident_list(&v)?,
                 "apply" => {
                     h.apply = match v.as_str() {
                         "save" => Apply::Save,
@@ -256,7 +277,11 @@ impl TableHeader {
                         _ => return Err(format!("`apply` must be save or manual, got `{v}`")),
                     }
                 }
-                _ => return Err(format!("unknown header field `{k}`")),
+                _ => {
+                    return Err(format!(
+                        "unknown header field `{k}`; fields: where, order, columns, page, limit, width, apply"
+                    ));
+                }
             }
         }
         h.conn = conn.ok_or("header has no `conn`")?;
@@ -283,9 +308,19 @@ mod tests {
             },
             width: 0,
             apply: Apply::Manual,
+            columns: vec!["id".into(), "Full Name".into()],
         };
         let line = h.render();
+        assert!(line.ends_with(r#" columns="id, \"Full Name\"""#), "{line}");
         assert_eq!(TableHeader::parse(&line).unwrap(), h);
+    }
+
+    #[test]
+    fn sort_is_order() {
+        let h = TableHeader::parse("# zpg v1 conn=c table=public.t sort=\"id desc\"").unwrap();
+        assert_eq!(h.query.order, "id desc");
+        assert!(h.render().contains(r#"order="id desc""#));
+        assert!(TableHeader::parse("# zpg v1 conn=c table=public.t sortt=id").unwrap_err().contains("fields:"));
     }
 
     #[test]

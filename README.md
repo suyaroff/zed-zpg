@@ -59,6 +59,7 @@ In the project's `.zed/settings.json` (`zed: open project settings`):
 - Values longer than `width` are cut with `…` and can't be edited in the table; hover shows the full value. Edit them in the row view, or raise `width` in the header (`0` = no limit).
 - Tables without a primary key, views and materialized views are read-only.
 - Generated columns accept only `DEFAULT`.
+- Zed soft-wraps lines longer than 512 columns whatever `soft_wrap` says, so when a page would be wider zpg cuts the widest non-key columns to a common width; if that's not enough, pick columns with `columns=`.
 
 ## Navigation and row view
 
@@ -76,6 +77,7 @@ Edit the first line and save to reload with new settings:
 | `where` | SQL condition, e.g. `where="active and created_at > now() - interval '1 day'"` |
 | `order` | SQL ORDER BY list, e.g. `order="id desc"`; default is the primary key |
 | `width` | max cell width, `0` = no limit |
+| `columns` | columns to show, e.g. `columns="full_name, email"`; key columns are always shown, hidden ones are left alone on write |
 | `apply=manual\|save` | `manual` (default) writes only with the code action *Apply changes*; `save` writes on every save |
 
 `conn`, `table` and `pk` are informational.

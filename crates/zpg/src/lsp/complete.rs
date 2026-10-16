@@ -42,7 +42,7 @@ pub fn values(snap: &Snapshot, i: usize, range: Range) -> Vec<CompletionItem> {
     out
 }
 
-/// Inside `where="…"` / `order="…"`: column names; elsewhere: header fields.
+/// Inside `where="…"` / `order="…"` / `columns="…"`: column names; elsewhere: header fields.
 pub fn header(line: &str, pos: Position, snap: &Snapshot) -> Vec<CompletionItem> {
     let chars: Vec<char> = line.chars().collect();
     let mut col16 = 0;
@@ -90,16 +90,16 @@ pub fn header(line: &str, pos: Position, snap: &Snapshot) -> Vec<CompletionItem>
     let start16: u32 = chars[..start].iter().map(|c| c.len_utf16() as u32).sum();
     let range = Range::new(Position::new(pos.line, start16), pos);
 
-    if quoted && (key == "where" || key == "order") {
+    if quoted && matches!(key.as_str(), "where" | "order" | "columns") {
         let mut out: Vec<CompletionItem> = snap
             .columns
             .iter()
             .map(|c| item(&display_ident(&c.name), CompletionItemKind::FIELD, Some(&c.type_name), range))
             .collect();
-        let extra: &[&str] = if key == "order" {
-            &["asc", "desc", "nulls first", "nulls last"]
-        } else {
-            &["and", "or", "not", "is null", "is not null", "in", "like", "ilike", "between"]
+        let extra: &[&str] = match key.as_str() {
+            "order" => &["asc", "desc", "nulls first", "nulls last"],
+            "where" => &["and", "or", "not", "is null", "is not null", "in", "like", "ilike", "between"],
+            _ => &[],
         };
         out.extend(extra.iter().map(|k| item(k, CompletionItemKind::KEYWORD, None, range)));
         return out;
@@ -113,6 +113,7 @@ pub fn header(line: &str, pos: Position, snap: &Snapshot) -> Vec<CompletionItem>
     [
         ("where", "where=\"$0\"", "filter rows (SQL condition)"),
         ("order", "order=\"$0\"", "sort rows (SQL ORDER BY list)"),
+        ("columns", "columns=\"$0\"", "columns to show, comma-separated"),
         ("page", "page=$0", "page number"),
         ("limit", "limit=$0", "rows per page"),
         ("width", "width=$0", "max cell width, 0 = no limit"),
