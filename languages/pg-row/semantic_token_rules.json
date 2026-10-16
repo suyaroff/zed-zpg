@@ -1,0 +1,5 @@
+[
+  { "token_type": "zpgModified", "style": ["keyword"], "font_weight": "bold", "underline": true },
+  { "token_type": "zpgInserted", "style": ["string.special", "string"], "font_weight": "bold", "underline": true },
+  { "token_type": "zpgColumn", "style": ["property"], "font_weight": "bold" }
+]

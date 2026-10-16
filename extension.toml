@@ -1,0 +1,11 @@
+id = "zpg"
+name = "zpg PostgreSQL"
+version = "0.1.0"
+schema_version = 1
+authors = ["jamal <suyaroff@gmail.com>"]
+description = "Browse and edit PostgreSQL tables as text buffers"
+repository = "https://github.com/suyaroff/zed-zpg"
+
+[language_servers.zpg]
+name = "zpg"
+languages = ["Pg Table", "Pg Catalog", "Pg Row"]

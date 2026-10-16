@@ -1,0 +1,8 @@
+/target
+*.wasm
+/grammars/
+.zpg/
+.zed/settings.json
+grammar/build/
+grammar/*.so
+grammar/*.dylib

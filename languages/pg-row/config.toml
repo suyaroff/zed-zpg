@@ -1,0 +1,6 @@
+name = "Pg Row"
+grammar = "zpg"
+path_suffixes = ["pgr"]
+line_comments = ["# "]
+tab_size = 2
+brackets = []

@@ -1,0 +1,163 @@
+[
+  {
+    "type": "document",
+    "named": true,
+    "root": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "block_line",
+          "named": true
+        },
+        {
+          "type": "comment",
+          "named": true
+        },
+        {
+          "type": "error_line",
+          "named": true
+        },
+        {
+          "type": "field",
+          "named": true
+        },
+        {
+          "type": "header",
+          "named": true
+        },
+        {
+          "type": "relation",
+          "named": true
+        },
+        {
+          "type": "row",
+          "named": true
+        },
+        {
+          "type": "section",
+          "named": true
+        },
+        {
+          "type": "separator",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "field",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "field_name",
+          "named": true
+        },
+        {
+          "type": "value",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "relation",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "estimate",
+          "named": true
+        },
+        {
+          "type": "kind",
+          "named": true
+        },
+        {
+          "type": "relname",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "row",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "cell",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "\n",
+    "named": false
+  },
+  {
+    "type": "block_line",
+    "named": true
+  },
+  {
+    "type": "cell",
+    "named": true
+  },
+  {
+    "type": "comment",
+    "named": true
+  },
+  {
+    "type": "error_line",
+    "named": true
+  },
+  {
+    "type": "estimate",
+    "named": true
+  },
+  {
+    "type": "field_name",
+    "named": true
+  },
+  {
+    "type": "header",
+    "named": true
+  },
+  {
+    "type": "kind",
+    "named": true
+  },
+  {
+    "type": "relname",
+    "named": true
+  },
+  {
+    "type": "section",
+    "named": true
+  },
+  {
+    "type": "separator",
+    "named": true
+  },
+  {
+    "type": "value",
+    "named": true
+  },
+  {
+    "type": "|",
+    "named": false
+  }
+]

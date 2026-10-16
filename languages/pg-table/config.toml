@@ -1,0 +1,6 @@
+name = "Pg Table"
+grammar = "zpg"
+path_suffixes = ["pgt"]
+line_comments = ["# "]
+tab_size = 2
+brackets = []

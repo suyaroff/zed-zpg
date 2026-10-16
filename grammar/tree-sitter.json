@@ -1,0 +1,16 @@
+{
+  "grammars": [
+    {
+      "name": "zpg",
+      "camelcase": "Zpg",
+      "scope": "source.zpg",
+      "path": ".",
+      "file-types": ["pgt", "pgdb", "pgr"]
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "MIT",
+    "description": "zpg table, catalog and row view grammar"
+  }
+}
