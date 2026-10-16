@@ -11,6 +11,6 @@ name = "zpg"
 languages = ["Pg Table", "Pg Catalog", "Pg Row", "Pg Result", "SQL"]
 
 [grammars.zpg]
-repository = "file:///home/jamal/Projects/zed_extentions/database"
-rev = "c5e84d3dd399fc39a24f9b16ca3ba8c456185927"
+repository = "https://github.com/suyaroff/zed-zpg"
+rev = "2558f9c2b7067f4f4d9fcbda68d6c01f81aa6e40"
 path = "grammar"
