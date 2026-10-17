@@ -264,6 +264,7 @@ mod tests {
             has_default,
             generated: false,
             enum_values: vec![],
+            comment: None,
         }
     }
 

@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use lsp_types::{CompletionItem, CompletionItemKind, Hover, HoverContents, MarkupContent, MarkupKind, Position, Range};
 use zpg_core::header::display_ident;
 use zpg_core::sqlctx::{Candidate, Schema, SchemaTable, Target};
-use zpg_core::{Column, sqlsplit, utf16_len};
+use zpg_core::{Column, catalog, sqlsplit, utf16_len};
 
 use super::complete::item;
 use super::query::position_to_offset;
@@ -48,10 +48,21 @@ fn column_flags(c: &Column) -> String {
     s
 }
 
-fn table_md(t: &SchemaTable, conn: &str) -> String {
-    let mut md = format!("**{}** · {}{} · {conn}\n", t.rel.name, t.rel.kind, rows_note(t));
+/// `note` ends the title line; `comment` goes under it.
+fn table_md(t: &SchemaTable, note: &str, comment: Option<&str>) -> String {
+    let mut md = format!("**{}** · {}{}", t.rel.name, t.rel.kind, rows_note(t));
+    if !note.is_empty() {
+        md += &format!(" · {note}");
+    }
+    md.push('\n');
+    if let Some(c) = comment {
+        md += &format!("\n{c}\n");
+    }
     for c in t.columns.iter().take(HOVER_COLUMNS) {
         md += &format!("\n- `{}` {}{}", display_ident(&c.name), c.type_name, column_flags(c));
+        if let Some(comment) = &c.comment {
+            md += &format!(" — {}", comment.lines().next().unwrap_or(""));
+        }
     }
     if t.columns.len() > HOVER_COLUMNS {
         md += &format!("\n- … {} more", t.columns.len() - HOVER_COLUMNS);
@@ -127,15 +138,43 @@ impl Server {
         let at = self.sql_at(key, pos)?;
         let conn = at.conn.clone();
         let md = match self.schema(&at.conn)?.resolve(&at.stmt, at.offset)? {
-            Target::Table(t) => table_md(t, &conn),
-            Target::Column(t, c) => format!(
-                "**{}.{}** `{}`{}",
-                t.short_name(),
-                display_ident(&c.name),
-                c.type_name,
-                column_flags(c)
-            ),
+            Target::Table(t) => table_md(t, &conn, None),
+            Target::Column(t, c) => {
+                let mut md = format!(
+                    "**{}.{}** `{}`{}",
+                    t.short_name(),
+                    display_ident(&c.name),
+                    c.type_name,
+                    column_flags(c)
+                );
+                if let Some(comment) = &c.comment {
+                    md += &format!("\n\n{comment}");
+                }
+                md
+            }
         };
+        Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: md,
+            }),
+            range: None,
+        })
+    }
+
+    /// A catalog line: the relation's columns, size and indexes.
+    pub(super) fn catalog_hover(&mut self, text: &str, pos: Position) -> Option<Hover> {
+        let (conn, table) = catalog::entry_at(text, pos.line)?;
+        let details = self.db.client(&self.settings, &conn).and_then(|c| db::details(c, &table)).ok();
+        let t = self.schema(&conn)?.table(Some(&table.schema), &table.name)?;
+        let note = details.as_ref().map_or(String::new(), |d| d.size.clone());
+        let mut md = table_md(t, &note, details.as_ref().and_then(|d| d.comment.as_deref()));
+        if let Some(d) = details.filter(|d| !d.indexes.is_empty()) {
+            md += "\n\n**Indexes**\n";
+            for i in d.indexes {
+                md += &format!("\n- {i}");
+            }
+        }
         Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,

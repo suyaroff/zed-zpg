@@ -169,6 +169,7 @@ mod tests {
             has_default: false,
             generated: false,
             enum_values: vec![],
+            comment: None,
         };
         Snapshot {
             conn: "c".into(),

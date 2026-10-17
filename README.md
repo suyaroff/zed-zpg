@@ -61,6 +61,7 @@ All zpg settings live in one user file, `~/.config/zpg/config.json`, shared by a
 ## Navigation and row view
 
 - `F12` on a foreign key cell opens the referenced table filtered to that row; hover shows the referenced row.
+- Hover on a catalog line shows the relation's columns, size and indexes; column comments (`COMMENT ON COLUMN`) show in every column hover.
 - `F12` on a primary key cell (or *Open row*) opens the row as `.pgr`, one `column: value` per line. Multi-line text is a block (`note: |` followed by lines indented by two spaces) and jsonb is pretty-printed. It is applied like the table it came from, and the table page is updated afterwards.
 - Completion: NULL/DEFAULT/`+`, booleans and enum labels in cells; column names and keywords inside `where="…"`/`order="…"`; header fields elsewhere.
 
@@ -91,7 +92,7 @@ Edit the first line and save to reload with new settings:
 
 ## Code actions (`ctrl-.`)
 
-*Apply changes*, *Preview SQL*, *Sort by <column> ↑/↓* (on the column row), *Open row*, *Insert row* (a template with `+`/DEFAULT/NULL filled in), *Next/Previous page*, *Refresh*, *Apply changes manually / on save*. In a row view: *Apply changes*, *Refresh row*. In the catalog: *Open table*, *Drop table…* (opens a `.sql` with the `DROP` to review and run with ▶; the catalog refreshes after DDL run from `.sql`), *Refresh catalog*, *Open settings file*.
+*Apply changes*, *Preview SQL*, *Sort by <column> ↑/↓* (on the column row), *Open row*, *Insert row* (a template with `+`/DEFAULT/NULL filled in), *Next/Previous page*, *Refresh*, *Apply changes manually / on save*, *Show DDL*. In a row view: *Apply changes*, *Refresh row*. In the catalog: *Open table*, *Show DDL* (opens `<schema>.<table>.ddl.sql`: `CREATE TABLE` with constraints, then indexes, triggers and comments, rebuilt from the system catalogs — no owners, grants or storage options), *Drop table…* (opens a `.sql` with the `DROP` to review and run with ▶; the catalog refreshes after DDL run from `.sql`), *Refresh catalog*, *Open settings file*.
 
 Pending changes are shown as a diagnostic on the header line. Changed cells and new rows are underlined via semantic tokens, which Zed only shows when enabled:
 

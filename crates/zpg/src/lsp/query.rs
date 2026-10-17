@@ -406,6 +406,47 @@ impl Server {
         self.show_document(conn, &target)
     }
 
+    /// Opens the relation's DDL as a `.sql` next to its page; `line` is the
+    /// catalog line when called from the catalog.
+    pub(super) fn show_ddl(&mut self, conn: &Connection, key: &str, line: Option<u32>) -> Res<()> {
+        let Some(doc) = self.docs.get(key) else {
+            return Ok(());
+        };
+        let Some(path) = doc.path() else {
+            return Ok(());
+        };
+        let (conn_name, table, target) = match (doc.kind(), line) {
+            (Kind::Catalog, Some(line)) => {
+                let Some((c, t)) = catalog::entry_at(&doc.text, line) else {
+                    return Ok(());
+                };
+                let Some(root) = path.parent() else {
+                    return Ok(());
+                };
+                let target = root.join(encode_name(&c)).join(format!("{}.ddl.sql", t.file_stem()));
+                (c, t, target)
+            }
+            (Kind::Table, _) => {
+                let Some(snap) = snapshot(&mut self.snaps, &path) else {
+                    return Ok(());
+                };
+                (snap.conn.clone(), snap.table.clone(), path.with_extension("ddl.sql"))
+            }
+            _ => return Ok(()),
+        };
+        let ddl = match self.db.client(&self.settings, &conn_name).and_then(|c| db::ddl(c, &table)) {
+            Ok(d) => d,
+            Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),
+        };
+        let text = format!(
+            "-- @conn {conn_name}\n\
+             -- {table}, rebuilt by zpg from the system catalogs (owners, grants and storage options are left out).\n\n\
+             {ddl}"
+        );
+        self.write_file(conn, &target, text)?;
+        self.show_document(conn, &target)
+    }
+
     pub(super) fn result_actions(&mut self, key: &str, path: &Path) -> Vec<CodeActionOrCommand> {
         let arg = || vec![Value::String(key.to_string())];
         let mut out = vec![command("zpg: Run again".into(), CMD_RERUN, arg())];
@@ -532,6 +573,7 @@ fn result_snapshot(conn: &str, cols: &[ResultCol], rows: &[Vec<Option<String>>],
                 has_default: false,
                 generated: false,
                 enum_values: vec![],
+                comment: None,
             })
             .collect(),
         pk: vec![],

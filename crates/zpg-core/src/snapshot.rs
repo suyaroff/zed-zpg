@@ -15,6 +15,9 @@ pub struct Column {
     /// Labels of an enum type, for completion.
     #[serde(default)]
     pub enum_values: Vec<String>,
+    /// `COMMENT ON COLUMN`.
+    #[serde(default)]
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

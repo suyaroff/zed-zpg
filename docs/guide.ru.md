@@ -178,6 +178,8 @@ public.v_active_users    view
 - `! ...` — ошибка подключения. Исправьте настройки, каталог обновится сам.
 - **F12** на строке таблицы открывает её. Если таблица уже открывалась, откроется существующий файл со всеми незаписанными правками. Свежие данные загружает [Refresh](#code-actions).
 - `ctrl-.` → **zpg: Refresh catalog** перечитывает список таблиц. После `CREATE`/`DROP`/`ALTER`, запущенных из `.sql`, каталог обновляется сам.
+- **Hover** на строке таблицы показывает её колонки с типами и комментариями, размер на диске (`pg_total_relation_size`) и индексы.
+- **Структура (DDL).** `ctrl-.` на строке таблицы → **zpg: Show DDL of public.users** открывает `.zpg/<подключение>/public.users.ddl.sql`: `CREATE TABLE` с колонками, default, identity и generated, ограничениями (PK, UNIQUE, CHECK, FK, EXCLUDE), а следом отдельные индексы, триггеры и `COMMENT ON`. Для view и materialized view — `CREATE VIEW … AS` с текстом запроса. DDL собирается из системного каталога, а не через `pg_dump`: владельцы, права и параметры хранения не выводятся. Из страницы таблицы то же самое: `ctrl-.` → **zpg: Show DDL**.
 - **Удаление таблицы.** `ctrl-.` на строке таблицы → **zpg: Drop public.users…** открывает файл `.zpg/<подключение>/drop-public.users.sql` с готовым запросом. Тип объекта подставляется сам: `DROP TABLE`, `DROP VIEW`, `DROP MATERIALIZED VIEW` или `DROP FOREIGN TABLE`. Проверьте запрос и нажмите ▶, только тогда таблица будет удалена. Чтобы удалить и зависимые объекты (view, внешние ключи), допишите `CASCADE`.
 
 ---
@@ -451,11 +453,12 @@ zpg знает таблицы и колонки подключения, на к�
 | **zpg: Next page / Previous page** | нет незаписанных правок | соседняя страница |
 | **zpg: Refresh** | всегда | перечитывает страницу и структуру таблицы из базы. С правками называется *Refresh (discard changes)* и отбрасывает их |
 | **zpg: Apply changes manually / on save** | всегда | переключает `apply=` в шапке |
+| **zpg: Show DDL** | всегда | открывает `CREATE TABLE` таблицы с индексами, триггерами и комментариями |
 
 В просмотре строки: **zpg: Apply changes**, **zpg: Refresh row (discard changes)**.
 В `.sql`: **zpg: Run statement on …**, **zpg: Run selection on …**.
 В результате запроса: **zpg: Edit rows in table**, **zpg: Run again**.
-В каталоге: **zpg: Open <таблица>**, **zpg: Drop <таблица>…**, **zpg: Refresh catalog** и **zpg: Open settings file**.
+В каталоге: **zpg: Open <таблица>**, **zpg: Show DDL of <таблица>**, **zpg: Drop <таблица>…**, **zpg: Refresh catalog** и **zpg: Open settings file**.
 
 ---
 

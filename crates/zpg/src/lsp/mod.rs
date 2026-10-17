@@ -56,6 +56,7 @@ const CMD_EDIT_RESULT: &str = "zpg.editResult";
 const CMD_DROP: &str = "zpg.drop";
 const CMD_SORT: &str = "zpg.sort";
 const CMD_CONFIG: &str = "zpg.openConfig";
+const CMD_DDL: &str = "zpg.ddl";
 
 /// How `refresh` changes the page it reloads.
 enum Reload {
@@ -192,6 +193,7 @@ pub fn run() -> Res<()> {
                 CMD_DROP,
                 CMD_SORT,
                 CMD_CONFIG,
+                CMD_DDL,
             ]
                 .map(String::from)
                 .to_vec(),
@@ -455,6 +457,9 @@ fn column_md(snap: &Snapshot, i: usize) -> String {
     for fk in snap.foreign_keys.iter().filter(|f| f.columns.contains(&i)) {
         md += &format!(" · → {}({})", fk.table, fk.ref_columns.join(", "));
     }
+    if let Some(c) = &col.comment {
+        md += &format!("\n\n{c}");
+    }
     md
 }
 
@@ -639,6 +644,7 @@ impl Server {
                         }
                     }
                     CMD_PREVIEW => self.preview(conn, &key)?,
+                    CMD_DDL => self.show_ddl(conn, &key, num(1))?,
                     CMD_RUN => {
                         if let Some(target) = query::RunTarget::from_args(&p.arguments) {
                             self.run_sql(conn, &key, target)?;
@@ -1290,6 +1296,7 @@ impl Server {
         match kind {
             Kind::Result => return self.result_hover(&text, &path, pos),
             Kind::Sql => return self.sql_hover(key, pos),
+            Kind::Catalog => return self.catalog_hover(&text, pos),
             _ => {}
         }
         let snap = snapshot(&mut self.snaps, &path)?.clone();
@@ -1409,6 +1416,11 @@ impl Server {
                         vec![arg(), Value::from(range.start.line)],
                     ));
                     out.push(command(
+                        format!("zpg: Show DDL of {table}"),
+                        CMD_DDL,
+                        vec![arg(), Value::from(range.start.line)],
+                    ));
+                    out.push(command(
                         format!("zpg: Drop {table}… (opens the SQL to review and run)"),
                         CMD_DROP,
                         vec![arg(), Value::from(range.start.line)],
@@ -1494,6 +1506,9 @@ impl Server {
                     vec![arg(), Value::from(page - 1)],
                 ));
             }
+        }
+        if self.caps.show_document {
+            out.push(command("zpg: Show DDL".into(), CMD_DDL, vec![arg()]));
         }
         out.push(command(
             if pending {
