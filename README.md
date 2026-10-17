@@ -61,6 +61,7 @@ All zpg settings live in one user file, `~/.config/zpg/config.json`, shared by a
 ## Navigation and row view
 
 - `F12` on a foreign key cell opens the referenced table filtered to that row; hover shows the referenced row.
+- The other way round: hover on a key cell lists the foreign keys pointing at the table, and on a data row (or in a row view) *Rows of public.orders referencing this (user_id)* opens `public.orders` filtered with `where="user_id = '5'"`; one action per such foreign key, at the end of the menu.
 - Hover on a catalog line shows the relation's columns, size and indexes; column comments (`COMMENT ON COLUMN`) show in every column hover.
 - `F12` on a primary key cell (or *Open row*) opens the row as `.pgr`, one `column: value` per line. Multi-line text is a block (`note: |` followed by lines indented by two spaces) and jsonb is pretty-printed. It is applied like the table it came from, and the table page is updated afterwards.
 - Completion: NULL/DEFAULT/`+`, booleans and enum labels in cells; column names and keywords inside `where="…"`/`order="…"`; header fields elsewhere.
@@ -88,11 +89,11 @@ Edit the first line and save to reload with new settings:
 | `columns` | columns to show, e.g. `columns="name, email"`; key columns are always shown, hidden ones are left alone on write |
 | `apply=manual\|save` | `manual` (default) writes only with the code action *Apply changes*; `save` writes on every save |
 
-`conn`, `table` and `pk` are informational.
+`conn`, `table`, `pk` and `total` are informational. `total` is how many rows match `where`: a `count(*)` when that takes under a second, else the planner's estimate written `~N`. Paging and sorting reuse it; *Refresh* and a new `where` count again; writes adjust it (an estimate once there is a `where`, since new rows may not match it).
 
 ## Code actions (`ctrl-.`)
 
-*Apply changes*, *Preview SQL*, *Sort by <column> ↑/↓* (on the column row), *Open row*, *Insert row* (a template with `+`/DEFAULT/NULL filled in), *Next/Previous page*, *Refresh*, *Apply changes manually / on save*, *Show DDL*. In a row view: *Apply changes*, *Refresh row*. In the catalog: *Open table*, *Show DDL* (opens `<schema>.<table>.ddl.sql`: `CREATE TABLE` with constraints, then indexes, triggers and comments, rebuilt from the system catalogs — no owners, grants or storage options), *Drop table…* (opens a `.sql` with the `DROP` to review and run with ▶; the catalog refreshes after DDL run from `.sql`), *Refresh catalog*, *Open settings file*.
+*Apply changes*, *Preview SQL*, *Sort by <column> ↑/↓* (on the column row), *Open row*, *Insert row* (a template with `+`/DEFAULT/NULL filled in), *Next/Previous/First/Last page* (titled with the page out of the total, e.g. *Next page (2/37)*), *Rows of … referencing this*, *Refresh*, *Apply changes manually / on save*, *Show DDL*. In a row view: *Apply changes*, *Refresh row*. In the catalog: *Open table*, *Show DDL* (opens `<schema>.<table>.ddl.sql`: `CREATE TABLE` with constraints, then indexes, triggers and comments, rebuilt from the system catalogs — no owners, grants or storage options), *Drop table…* (opens a `.sql` with the `DROP` to review and run with ▶; the catalog refreshes after DDL run from `.sql`), *Refresh catalog*, *Open settings file*.
 
 Pending changes are shown as a diagnostic on the header line. Changed cells and new rows are underlined via semantic tokens, which Zed only shows when enabled:
 

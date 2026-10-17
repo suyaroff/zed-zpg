@@ -9,8 +9,8 @@ pub mod sqlsplit;
 pub mod sql;
 pub mod table;
 
-pub use header::{Apply, QualName, Query, TableHeader};
-pub use snapshot::{Column, ForeignKey, Snapshot, SnapRow};
+pub use header::{Apply, QualName, Query, TableHeader, Total};
+pub use snapshot::{BackRef, Column, ForeignKey, Snapshot, SnapRow};
 
 pub const MAGIC: &str = "# zpg v1";
 

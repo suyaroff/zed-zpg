@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::cell::{self, Value, display_width};
-use crate::header::{Apply, QualName, Query, TableHeader};
+use crate::header::{Apply, QualName, Query, TableHeader, Total};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Column {
@@ -29,6 +29,16 @@ pub struct ForeignKey {
     pub ref_columns: Vec<String>,
 }
 
+/// A foreign key of another table that points at this one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackRef {
+    pub table: QualName,
+    /// The referencing columns, in that table.
+    pub columns: Vec<String>,
+    /// Indices into `Snapshot::columns` they point at, matching `columns` one to one.
+    pub ref_columns: Vec<usize>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapRow {
     /// Row version for optimistic locking; `None` for views.
@@ -47,6 +57,8 @@ pub struct Snapshot {
     pub pk: Vec<usize>,
     #[serde(default)]
     pub foreign_keys: Vec<ForeignKey>,
+    #[serde(default)]
+    pub referenced_by: Vec<BackRef>,
     /// Why the rows can't be edited, if they can't.
     pub read_only: Option<String>,
     pub query: Query,
@@ -55,6 +67,9 @@ pub struct Snapshot {
     /// Column names from the header's `columns=`; empty = all.
     #[serde(default)]
     pub visible: Vec<String>,
+    /// Rows matching `query.filter`, when known.
+    #[serde(default)]
+    pub total: Option<Total>,
     pub rows: Vec<SnapRow>,
 }
 
@@ -80,6 +95,7 @@ impl Snapshot {
             width: self.width,
             apply: self.apply,
             columns: self.visible.clone(),
+            total: self.total,
         }
     }
 

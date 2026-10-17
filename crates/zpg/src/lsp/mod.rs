@@ -37,7 +37,7 @@ use zpg_core::diff::{self, Diff, Source};
 use zpg_core::header::display_ident;
 use zpg_core::sqlctx::Schema;
 use zpg_core::table::{self, Parsed};
-use zpg_core::{Apply, ForeignKey, Issue, QualName, Query, Severity, Snapshot, record, sql};
+use zpg_core::{Apply, ForeignKey, Issue, QualName, Query, Severity, Snapshot, Total, record, sql};
 
 use self::edits::minimal_edits;
 use crate::config::{self, Settings};
@@ -57,6 +57,7 @@ const CMD_DROP: &str = "zpg.drop";
 const CMD_SORT: &str = "zpg.sort";
 const CMD_CONFIG: &str = "zpg.openConfig";
 const CMD_DDL: &str = "zpg.ddl";
+const CMD_BACKREF: &str = "zpg.referencing";
 
 /// How `refresh` changes the page it reloads.
 enum Reload {
@@ -194,6 +195,7 @@ pub fn run() -> Res<()> {
                 CMD_SORT,
                 CMD_CONFIG,
                 CMD_DDL,
+                CMD_BACKREF,
             ]
                 .map(String::from)
                 .to_vec(),
@@ -430,9 +432,9 @@ fn line_value(snap: &Snapshot, line: &str, col: usize) -> Option<CellValue> {
 }
 
 /// Text values of the FK columns, if all are plain values.
-fn fk_values(fk: &ForeignKey, value_of: impl Fn(usize) -> Option<CellValue>) -> Option<Vec<String>> {
-    fk.columns
-        .iter()
+/// The text values of columns `cols`; `None` when any is NULL or missing.
+fn cell_texts(cols: &[usize], value_of: impl Fn(usize) -> Option<CellValue>) -> Option<Vec<String>> {
+    cols.iter()
         .map(|&c| match value_of(c)? {
             CellValue::Text(s) => Some(s),
             _ => None,
@@ -459,6 +461,15 @@ fn column_md(snap: &Snapshot, i: usize) -> String {
     }
     if let Some(c) = &col.comment {
         md += &format!("\n\n{c}");
+    }
+    let refs: Vec<String> = snap
+        .referenced_by
+        .iter()
+        .filter(|b| b.ref_columns.contains(&i))
+        .map(|b| format!("{}({})", b.table, b.columns.join(", ")))
+        .collect();
+    if !refs.is_empty() {
+        md += &format!("\n\n← referenced by {}", refs.join(", "));
     }
     md
 }
@@ -661,9 +672,12 @@ impl Server {
                         Ok(path) => self.show_document(conn, &path)?,
                         Err(e) => show(conn, MessageType::ERROR, format!("zpg: {e}"))?,
                     },
-                    CMD_OPEN | CMD_OPEN_ROW => {
+                    CMD_OPEN | CMD_OPEN_ROW | CMD_BACKREF => {
                         if let Some(line) = num(1) {
-                            let target = self.definition(&key, Position::new(line, 0));
+                            let target = match (p.command.as_str(), num(2)) {
+                                (CMD_BACKREF, Some(k)) => self.referencing(&key, line, k as usize),
+                                _ => self.definition(&key, Position::new(line, 0)),
+                            };
                             self.flush_writes(conn)?;
                             match target {
                                 Ok(Some(path)) => self.show_document(conn, &path)?,
@@ -797,6 +811,7 @@ impl Server {
             apply,
             visible,
             read_only_conn: self.settings.connections.get(conn).is_some_and(|c| c.read_only()),
+            total: None,
         }
     }
 
@@ -862,7 +877,7 @@ impl Server {
                     return Ok(None);
                 };
                 if let Some(fk) = snap.foreign_keys.iter().find(|f| f.columns.contains(&i)) {
-                    let values = fk_values(fk, |c| line_value(&snap, &line, c));
+                    let values = cell_texts(&fk.columns, |c| line_value(&snap, &line, c));
                     return match values {
                         Some(v) => self.follow_fk(&path, &snap, fk, &v).map(Some),
                         None => Ok(None),
@@ -885,7 +900,7 @@ impl Server {
                     return Ok(None);
                 };
                 let value_of = |c: usize| parsed.fields.iter().find(|f| f.col == c).and_then(|f| f.value.clone().ok());
-                let Some(values) = fk_values(fk, value_of) else {
+                let Some(values) = cell_texts(&fk.columns, value_of) else {
                     return Ok(None);
                 };
                 let Some(table_path) = table_of_row(&path) else {
@@ -900,20 +915,68 @@ impl Server {
 
     /// Opens the referenced table filtered to the referenced row.
     fn follow_fk(&mut self, from: &Path, snap: &Snapshot, fk: &ForeignKey, values: &[String]) -> Result<PathBuf, String> {
+        self.open_filtered(from, &snap.conn, &fk.table, &fk.ref_columns, values)
+    }
+
+    /// Opens the rows of `referenced_by[k]` that point at the row on `line`
+    /// (of a table page; any line of a row view).
+    fn referencing(&mut self, key: &str, line: u32, k: usize) -> Result<Option<PathBuf>, String> {
+        let Some(doc) = self.docs.get(key) else {
+            return Ok(None);
+        };
+        let Some(path) = doc.path() else {
+            return Ok(None);
+        };
+        let (kind, text) = (doc.kind(), doc.text.clone());
+        let Some(snap) = snapshot(&mut self.snaps, &path).cloned() else {
+            return Ok(None);
+        };
+        let Some(b) = snap.referenced_by.get(k) else {
+            return Ok(None);
+        };
+        let (from, values) = match kind {
+            Kind::Table => {
+                let l = text.split('\n').nth(line as usize).unwrap_or("");
+                (path.clone(), cell_texts(&b.ref_columns, |c| line_value(&snap, l, c)))
+            }
+            Kind::Row => {
+                let parsed = record::parse(&text, &snap);
+                let value_of = |c: usize| parsed.fields.iter().find(|f| f.col == c).and_then(|f| f.value.clone().ok());
+                let Some(from) = table_of_row(&path) else {
+                    return Ok(None);
+                };
+                (from, cell_texts(&b.ref_columns, value_of))
+            }
+            _ => return Ok(None),
+        };
+        let Some(values) = values else {
+            return Err("the key of this row is empty".into());
+        };
+        self.open_filtered(&from, &snap.conn, &b.table, &b.columns, &values).map(Some)
+    }
+
+    /// Opens `table` of `conn` filtered to `columns` = `values`; `from` is a page under `.zpg/<conn>/`.
+    fn open_filtered(
+        &mut self,
+        from: &Path,
+        conn: &str,
+        table: &QualName,
+        columns: &[String],
+        values: &[String],
+    ) -> Result<PathBuf, String> {
         let root = from
             .parent()
             .and_then(Path::parent)
             .ok_or("table file is not inside .zpg/<conn>/")?
             .to_path_buf();
-        let path = self.open_table(&root, &snap.conn, &fk.table)?;
+        let path = self.open_table(&root, conn, table)?;
         if self.has_local_edits(&path) {
             return Ok(path);
         }
         let Some(target) = snapshot(&mut self.snaps, &path).cloned() else {
             return Ok(path);
         };
-        let filter = fk
-            .ref_columns
+        let filter = columns
             .iter()
             .zip(values)
             .map(|(c, v)| format!("{} = {}", display_ident(c), sql_literal(v)))
@@ -1017,7 +1080,15 @@ impl Server {
         if let Some(p) = page {
             query.page = p;
         }
-        let d = self.defaults(&conn_name, query, width, apply, visible);
+        let mut d = self.defaults(&conn_name, query, width, apply, visible);
+        // Paging and sorting don't change how many rows match.
+        if page.is_some()
+            && let Some(o) = &old
+            && o.table == table
+            && o.query.filter == d.query.filter
+        {
+            d.total = o.total;
+        }
         let snap = match self.load_table(&path, &conn_name, &table, &d) {
             Ok(s) => s,
             Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),
@@ -1146,6 +1217,15 @@ impl Server {
                 })
                 .collect();
             summary = Some(d.summary());
+            if let Some(t) = new.total {
+                let (_, inserted, deleted) = d.counts();
+                let n = (t.rows() + inserted as u64).saturating_sub(deleted as u64);
+                // Inserted rows may not match the filter.
+                new.total = Some(match t {
+                    Total::Exact(_) if snap.query.filter.trim().is_empty() => Total::Exact(n),
+                    _ => Total::Estimate(n),
+                });
+            }
         }
 
         // `width` and `columns` only change how the loaded rows are drawn.
@@ -1158,6 +1238,11 @@ impl Server {
                 .and_then(|c| db::fetch(c, &new, &header.query));
             match fetched {
                 Ok(rows) => {
+                    if header.query.filter != snap.query.filter
+                        && let Ok(c) = self.db.client(&self.settings, &snap.conn)
+                    {
+                        new.total = db::count(c, &new, &header.query);
+                    }
                     new.query = header.query.clone();
                     new.rows = rows;
                 }
@@ -1314,7 +1399,7 @@ impl Server {
                     md += &values::value_md(v, &snap.columns[i].type_name, cut);
                 }
                 if let Some(fk) = snap.foreign_keys.iter().find(|f| f.columns.contains(&i))
-                    && let Some(values) = fk_values(fk, |c| line_value(&snap, line, c))
+                    && let Some(values) = cell_texts(&fk.columns, |c| line_value(&snap, line, c))
                 {
                     md += &self.referenced_md(&snap, fk, &values);
                 }
@@ -1329,7 +1414,7 @@ impl Server {
                 }
                 if let Some(fk) = snap.foreign_keys.iter().find(|f| f.columns.contains(&field.col)) {
                     let value_of = |c: usize| parsed.fields.iter().find(|f| f.col == c).and_then(|f| f.value.clone().ok());
-                    if let Some(values) = fk_values(fk, value_of) {
+                    if let Some(values) = cell_texts(&fk.columns, value_of) {
                         md += &self.referenced_md(&snap, fk, &values);
                     }
                 }
@@ -1441,6 +1526,11 @@ impl Server {
                     }
                 }
                 out.push(command("zpg: Refresh row (discard changes)".into(), CMD_REFRESH, vec![arg()]));
+                if self.caps.show_document
+                    && let Some(snap) = snapshot(&mut self.snaps, &path)
+                {
+                    out.extend(backref_actions(snap, key, 0));
+                }
                 return out;
             }
             Kind::Sql => {
@@ -1460,11 +1550,13 @@ impl Server {
         let pending = d.as_ref().is_some_and(|d| !d.ops.is_empty());
         let clean = d.as_ref().is_some_and(|d| !d.issues.iter().any(|i| i.severity == Severity::Error));
 
-        if self.caps.show_document
-            && let Some(line) = text.split('\n').nth(range.start.line as usize)
+        let on_row = self.caps.show_document
             && range.start.line > 0
-            && row_of_line(snap, line).is_some()
-        {
+            && text
+                .split('\n')
+                .nth(range.start.line as usize)
+                .is_some_and(|line| row_of_line(snap, line).is_some());
+        if on_row {
             out.push(command("zpg: Open row".into(), CMD_OPEN_ROW, vec![arg(), Value::from(range.start.line)]));
         }
         if let Some(cols) = &parsed.columns
@@ -1492,19 +1584,27 @@ impl Server {
         }
         if !pending {
             let page = parsed.header.as_ref().map_or(snap.query.page, |h| h.query.page);
-            if snap.rows.len() as u32 >= snap.query.limit {
-                out.push(command(
-                    format!("zpg: Next page ({})", page + 1),
-                    CMD_PAGE,
-                    vec![arg(), Value::from(page + 1)],
-                ));
+            let pages = snap.total.map(|t| t.pages(snap.query.limit));
+            let of = match (pages, snap.total) {
+                (Some(n), Some(Total::Estimate(_))) => format!("/~{n}"),
+                (Some(n), _) => format!("/{n}"),
+                _ => String::new(),
+            };
+            let mut go = |title: &str, p: u64| {
+                out.push(command(format!("zpg: {title} ({p}{of})"), CMD_PAGE, vec![arg(), Value::from(p)]));
+            };
+            let more = snap.rows.len() as u32 >= snap.query.limit;
+            if more {
+                go("Next page", u64::from(page) + 1);
             }
             if page > 1 {
-                out.push(command(
-                    format!("zpg: Previous page ({})", page - 1),
-                    CMD_PAGE,
-                    vec![arg(), Value::from(page - 1)],
-                ));
+                go("Previous page", u64::from(page) - 1);
+            }
+            if page > 2 {
+                go("First page", 1);
+            }
+            if let Some(n) = pages.filter(|&n| more && n > u64::from(page) + 1) {
+                go("Last page", n);
             }
         }
         if self.caps.show_document {
@@ -1535,6 +1635,10 @@ impl Server {
                 uri,
                 vec![TextEdit::new(line_range(&text, 0), toggled.render())],
             ));
+        }
+        // Last: a much-referenced table has dozens.
+        if on_row {
+            out.extend(backref_actions(snap, key, range.start.line));
         }
         out
     }
@@ -1709,6 +1813,21 @@ impl Server {
 }
 
 /// LSP's relative encoding of (line, start, end, type) spans.
+/// *Referencing rows* actions for the row on `line` (any line of a row view).
+fn backref_actions(snap: &Snapshot, key: &str, line: u32) -> Vec<CodeActionOrCommand> {
+    snap.referenced_by
+        .iter()
+        .enumerate()
+        .map(|(k, b)| {
+            command(
+                format!("zpg: Rows of {} referencing this ({})", b.table, b.columns.join(", ")),
+                CMD_BACKREF,
+                vec![Value::String(key.to_string()), Value::from(line), Value::from(k)],
+            )
+        })
+        .collect()
+}
+
 fn encode_tokens(mut spans: Vec<(u32, u32, u32, u32)>) -> Vec<SemanticToken> {
     spans.retain(|s| s.2 > s.1);
     spans.sort();

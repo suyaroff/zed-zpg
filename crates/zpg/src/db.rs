@@ -10,7 +10,7 @@ use zpg_core::diff::{Diff, Op};
 use zpg_core::sql::{self, Stmt};
 use zpg_core::sqlctx::{Schema, SchemaTable};
 use zpg_core::header::quote_ident;
-use zpg_core::{Apply, Column, ForeignKey, QualName, Query, SnapRow, Snapshot};
+use zpg_core::{Apply, BackRef, Column, ForeignKey, QualName, Query, SnapRow, Snapshot, Total};
 
 use crate::config::{Settings, config_path, expand_env};
 use crate::tunnel::{self, Remote, Tunnel};
@@ -458,6 +458,8 @@ pub struct Defaults {
     pub apply: Apply,
     pub visible: Vec<String>,
     pub read_only_conn: bool,
+    /// Reused instead of counting again, e.g. when only the page changes.
+    pub total: Option<Total>,
 }
 
 /// Reads the table's shape and the page `d.query`.
@@ -536,6 +538,35 @@ pub fn load(c: &mut Client, conn: &str, table: &QualName, d: &Defaults) -> Resul
         })
         .collect();
 
+    let referenced_by: Vec<BackRef> = c
+        .query(
+            "SELECT rn.nspname::text, rc.relname::text,
+                    (SELECT array_agg(a.attname::text ORDER BY k.ord)
+                     FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+                     JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum),
+                    (SELECT array_agg(a.attname::text ORDER BY k.ord)
+                     FROM unnest(c.confkey) WITH ORDINALITY AS k(attnum, ord)
+                     JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.attnum)
+             FROM pg_constraint c
+             JOIN pg_class rc ON rc.oid = c.conrelid
+             JOIN pg_namespace rn ON rn.oid = rc.relnamespace
+             WHERE c.confrelid = to_regclass($1) AND c.contype = 'f' AND c.conparentid = 0
+               AND has_table_privilege(rc.oid, 'SELECT')
+             ORDER BY 1, 2, c.conname",
+            &[&name],
+        )
+        .map_err(|e| fmt_err(&e))?
+        .iter()
+        .filter_map(|r| {
+            let ours: Vec<String> = r.get(3);
+            Some(BackRef {
+                table: QualName::new(r.get::<_, String>(0), r.get::<_, String>(1)),
+                columns: r.get(2),
+                ref_columns: ours.iter().map(index).collect::<Option<_>>()?,
+            })
+        })
+        .collect();
+
     let read_only = if !matches!(kind.as_str(), "r" | "p") {
         Some("not a table".to_string())
     } else if pk.is_empty() {
@@ -551,15 +582,45 @@ pub fn load(c: &mut Client, conn: &str, table: &QualName, d: &Defaults) -> Resul
         columns,
         pk,
         foreign_keys,
+        referenced_by,
         read_only,
         query: d.query.clone(),
         width: d.width,
         apply: d.apply,
         visible: d.visible.clone(),
+        total: None,
         rows: vec![],
     };
     snap.rows = fetch(c, &snap, &snap.query)?;
+    snap.total = d.total.or_else(|| count(c, &snap, &snap.query));
     Ok(snap)
+}
+
+/// Counting longer than this falls back to the planner's estimate.
+const COUNT_TIMEOUT_MS: u32 = 1000;
+
+/// Rows matching `q.filter`: counted when that's quick, else estimated.
+pub fn count(c: &mut Client, snap: &Snapshot, q: &Query) -> Option<Total> {
+    count_rows(c, &sql::count(snap, q))
+        .map(Total::Exact)
+        .or_else(|| estimate_rows(c, &sql::estimate(snap, q)).map(Total::Estimate))
+}
+
+fn count_rows(c: &mut Client, sql: &str) -> Option<u64> {
+    let mut tx = c.build_transaction().read_only(true).start().ok()?;
+    tx.batch_execute(&format!("SET LOCAL statement_timeout = {COUNT_TIMEOUT_MS}")).ok()?;
+    let n: i64 = tx.query_one(sql, &[]).ok()?.get(0);
+    tx.commit().ok()?;
+    Some(n.max(0) as u64)
+}
+
+fn estimate_rows(c: &mut Client, sql: &str) -> Option<u64> {
+    let mut tx = c.build_transaction().read_only(true).start().ok()?;
+    let msgs = tx.simple_query(sql).ok()?;
+    tx.commit().ok()?;
+    let plan = simple_rows(msgs).0.into_iter().next()?.into_iter().next()??;
+    let plan: serde_json::Value = serde_json::from_str(&plan).ok()?;
+    plan[0]["Plan"]["Plan Rows"].as_f64().map(|n| n.max(0.0) as u64)
 }
 
 pub fn fetch(c: &mut Client, snap: &Snapshot, q: &Query) -> Result<Vec<SnapRow>, String> {

@@ -282,6 +282,8 @@ mod tests {
             columns: vec![col("id"), col("note"), col("meta"), col("empty")],
             pk: vec![0],
             foreign_keys: vec![],
+            referenced_by: vec![],
+            total: None,
             read_only: None,
             query: Query {
                 page: 1,

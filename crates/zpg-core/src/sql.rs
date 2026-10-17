@@ -57,11 +57,18 @@ impl Builder {
     }
 }
 
+/// ` WHERE (<filter>)`, or nothing without a filter.
+fn filter_clause(q: &Query) -> String {
+    if q.filter.trim().is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE ({})", q.filter)
+    }
+}
+
 pub fn select_page(snap: &Snapshot, has_xmin: bool, q: &Query) -> Stmt {
     let mut sql = format!("SELECT {} FROM {}", returning(&snap.columns, has_xmin), snap.table.sql());
-    if !q.filter.trim().is_empty() {
-        sql += &format!(" WHERE ({})", q.filter);
-    }
+    sql += &filter_clause(q);
     if !q.order.trim().is_empty() {
         sql += &format!(" ORDER BY {}", q.order);
     } else if !snap.pk.is_empty() {
@@ -70,6 +77,16 @@ pub fn select_page(snap: &Snapshot, has_xmin: bool, q: &Query) -> Stmt {
     }
     sql += &format!(" LIMIT {} OFFSET {}", q.limit, q.offset());
     Stmt { sql, params: vec![] }
+}
+
+/// Counts the rows `q.filter` matches.
+pub fn count(snap: &Snapshot, q: &Query) -> String {
+    format!("SELECT count(*) FROM {}{}", snap.table.sql(), filter_clause(q))
+}
+
+/// The planner's guess of the same, as a JSON plan with `Plan Rows`.
+pub fn estimate(snap: &Snapshot, q: &Query) -> String {
+    format!("EXPLAIN (FORMAT JSON) SELECT 1 FROM {}{}", snap.table.sql(), filter_clause(q))
 }
 
 /// One row by key. With `pretty`, jsonb comes indented over several lines,
@@ -177,6 +194,8 @@ mod tests {
             columns: vec![col("id", "integer"), col("na\"me", "text")],
             pk: vec![0],
             foreign_keys: vec![],
+            referenced_by: vec![],
+            total: None,
             read_only: None,
             query: Query {
                 page: 2,

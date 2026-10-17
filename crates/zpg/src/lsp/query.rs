@@ -578,6 +578,8 @@ fn result_snapshot(conn: &str, cols: &[ResultCol], rows: &[Vec<Option<String>>],
             .collect(),
         pk: vec![],
         foreign_keys: vec![],
+        referenced_by: vec![],
+        total: None,
         read_only: Some("query result; use “Edit rows in table” to change rows".into()),
         query: Query {
             page: 1,

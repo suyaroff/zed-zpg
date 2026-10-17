@@ -139,6 +139,48 @@ impl Query {
     }
 }
 
+/// How many rows match the page's `where`: counted, or the planner's
+/// estimate when counting took too long.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Total {
+    Exact(u64),
+    Estimate(u64),
+}
+
+impl Total {
+    pub fn rows(self) -> u64 {
+        match self {
+            Total::Exact(n) | Total::Estimate(n) => n,
+        }
+    }
+
+    /// Pages of `limit` rows; at least 1.
+    pub fn pages(self, limit: u32) -> u64 {
+        self.rows().div_ceil(u64::from(limit.max(1))).max(1)
+    }
+}
+
+impl fmt::Display for Total {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Total::Exact(n) => write!(f, "{n}"),
+            Total::Estimate(n) => write!(f, "~{n}"),
+        }
+    }
+}
+
+impl std::str::FromStr for Total {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, String> {
+        let bad = |_| format!("`total` must be a number, got `{s}`");
+        match s.strip_prefix('~') {
+            Some(n) => n.parse().map(Total::Estimate).map_err(bad),
+            None => s.parse().map(Total::Exact).map_err(bad),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableHeader {
     pub conn: String,
@@ -151,6 +193,8 @@ pub struct TableHeader {
     pub apply: Apply,
     /// Columns to show; empty = all. Key columns are always shown.
     pub columns: Vec<String>,
+    /// Informational, like `pk`.
+    pub total: Option<Total>,
 }
 
 pub fn quote_value(v: &str) -> String {
@@ -163,7 +207,8 @@ pub fn quote_value(v: &str) -> String {
 /// Header fields whose unquoted value may have spaces: it runs up to the
 /// next ` field=`, so `order=id desc` needs no quotes.
 const SPACED: &[&str] = &["where", "order", "columns"];
-const TABLE_FIELDS: &[&str] = &["conn", "table", "pk", "page", "limit", "width", "apply", "where", "order", "columns"];
+const TABLE_FIELDS: &[&str] =
+    &["conn", "table", "pk", "page", "limit", "total", "width", "apply", "where", "order", "columns"];
 
 /// Splits `key=value key="quoted value"` pairs; unquoted values of
 /// `SPACED` keys extend to the next ` known=`.
@@ -234,12 +279,13 @@ fn next_field(s: &str, known: &[&str]) -> Option<usize> {
 impl TableHeader {
     pub fn render(&self) -> String {
         let mut s = format!(
-            "{MAGIC} conn={} table={} pk={} page={} limit={} width={} apply={}",
+            "{MAGIC} conn={} table={} pk={} page={} limit={}{} width={} apply={}",
             quote_value(&self.conn),
             quote_value(&self.table.to_string()),
             quote_value(&self.pk),
             self.query.page,
             self.query.limit,
+            self.total.map(|t| format!(" total={t}")).unwrap_or_default(),
             self.width,
             match self.apply {
                 Apply::Save => "save",
@@ -278,6 +324,7 @@ impl TableHeader {
             width: 40,
             apply: Apply::Manual,
             columns: vec![],
+            total: None,
         };
         let num = |k: &str, v: &str| v.parse::<u32>().map_err(|_| format!("`{k}` must be a number, got `{v}`"));
         for (k, v) in parse_pairs(rest, TABLE_FIELDS)? {
@@ -285,6 +332,7 @@ impl TableHeader {
                 "conn" => conn = Some(v),
                 "table" => table = Some(v.parse::<QualName>()?),
                 "pk" => h.pk = v,
+                "total" => h.total = v.parse().ok(),
                 "page" => h.query.page = num(&k, &v)?.max(1),
                 "limit" => h.query.limit = num(&k, &v)?.clamp(1, 10_000),
                 "width" => h.width = num(&k, &v)?,
@@ -330,10 +378,23 @@ mod tests {
             width: 0,
             apply: Apply::Manual,
             columns: vec!["id".into(), "Full Name".into()],
+            total: Some(Total::Estimate(1234)),
         };
         let line = h.render();
+        assert!(line.contains(" limit=50 total=~1234 "), "{line}");
         assert!(line.ends_with(r#" columns="id, \"Full Name\"""#), "{line}");
         assert_eq!(TableHeader::parse(&line).unwrap(), h);
+    }
+
+    #[test]
+    fn totals() {
+        assert_eq!("~12".parse::<Total>(), Ok(Total::Estimate(12)));
+        assert_eq!("12".parse::<Total>(), Ok(Total::Exact(12)));
+        assert!("x".parse::<Total>().is_err());
+        assert_eq!(Total::Exact(0).pages(100), 1);
+        assert_eq!(Total::Exact(201).pages(100), 3);
+        let h = TableHeader::parse("# zpg v1 conn=c table=public.t total=oops").unwrap();
+        assert_eq!(h.total, None);
     }
 
     #[test]
