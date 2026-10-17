@@ -72,6 +72,7 @@ zpg also attaches to `.sql` files (install Zed's SQL extension and keep `"code_l
 - Rows open in a read-only `.pgres` tab (at most `max_result_rows`, read through a cursor); other statements report their tag, e.g. `UPDATE 3`. Errors roll back and are underlined at the position Postgres reports.
 - If a result comes from one table and includes its key, *Edit rows in table* opens that table's page filtered with `where="id IN (SELECT id FROM (<query>) AS zpg_q)"`.
 - Settings: `max_result_rows` (1000), `statement_timeout_ms` (60000).
+- Table and column names of the statement's connection: completion (tables and schemas after `from`/`join`/`update`/`into`, columns after `alias.` or `table.`, tables after `schema.`), hover (a table's columns and types, a column's type), and `F12` on a table opens its page. Names are read on first use and kept for 5 minutes; DDL run from `.sql` and *Refresh catalog* reload them.
 
 ## Header
 

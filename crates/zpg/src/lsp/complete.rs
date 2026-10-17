@@ -5,7 +5,7 @@ use zpg_core::cell;
 use zpg_core::header::display_ident;
 use zpg_core::{Column, Snapshot};
 
-fn item(label: &str, kind: CompletionItemKind, detail: Option<&str>, range: Range) -> CompletionItem {
+pub fn item(label: &str, kind: CompletionItemKind, detail: Option<&str>, range: Range) -> CompletionItem {
     CompletionItem {
         label: label.to_string(),
         kind: Some(kind),

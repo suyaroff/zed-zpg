@@ -1,12 +1,13 @@
 mod complete;
 mod edits;
 mod query;
+mod sqlinfo;
 mod values;
 
 use std::collections::HashMap;
 use std::error::Error;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 use lsp_server::{Connection, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::{
@@ -34,6 +35,7 @@ use zpg_core::catalog::{self, Section};
 use zpg_core::cell::{self, Value as CellValue};
 use zpg_core::diff::{self, Diff, Source};
 use zpg_core::header::display_ident;
+use zpg_core::sqlctx::Schema;
 use zpg_core::table::{self, Parsed};
 use zpg_core::{Apply, ForeignKey, Issue, QualName, Query, Severity, Snapshot, record, sql};
 
@@ -138,6 +140,9 @@ struct Server {
     next_id: i32,
     /// Files to write once a connection to the client is at hand.
     pending_writes: Vec<(PathBuf, String)>,
+    /// Tables and columns per connection for `.sql` files, with when they
+    /// were read; `None` when reading failed.
+    schemas: HashMap<String, (Instant, Option<Schema>)>,
 }
 
 pub fn run() -> Res<()> {
@@ -154,7 +159,7 @@ pub fn run() -> Res<()> {
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
         completion_provider: Some(CompletionOptions {
-            trigger_characters: Some(vec!["\"".into()]),
+            trigger_characters: Some(vec!["\"".into(), ".".into()]),
             ..Default::default()
         }),
         document_formatting_provider: Some(OneOf::Left(true)),
@@ -472,6 +477,7 @@ impl Server {
             Ok(s) => {
                 self.settings = s;
                 self.db.clear();
+                self.schemas.clear();
                 let catalogs: Vec<String> = self
                     .docs
                     .iter()
@@ -766,6 +772,7 @@ impl Server {
     }
 
     fn refresh_catalog(&mut self, conn: &Connection, key: &str) -> Res<()> {
+        self.schemas.clear();
         let names: Vec<String> = self.settings.connections.keys().cloned().collect();
         let sections: Vec<Section> = names
             .into_iter()
@@ -880,7 +887,8 @@ impl Server {
                 };
                 self.follow_fk(&table_path, &snap, fk, &values).map(Some)
             }
-            Kind::Sql | Kind::Result | Kind::Other => Ok(None),
+            Kind::Sql => self.sql_definition(key, pos),
+            Kind::Result | Kind::Other => Ok(None),
         }
     }
 
@@ -1279,8 +1287,10 @@ impl Server {
         let kind = doc.kind();
         let path = doc.path()?;
         let text = doc.text.clone();
-        if kind == Kind::Result {
-            return self.result_hover(&text, &path, pos);
+        match kind {
+            Kind::Result => return self.result_hover(&text, &path, pos),
+            Kind::Sql => return self.sql_hover(key, pos),
+            _ => {}
         }
         let snap = snapshot(&mut self.snaps, &path)?.clone();
         let line = text.split('\n').nth(pos.line as usize)?;
@@ -1334,6 +1344,9 @@ impl Server {
             return vec![];
         };
         let kind = doc.kind();
+        if kind == Kind::Sql {
+            return self.sql_completion(key, pos);
+        }
         let Some(path) = doc.path() else {
             return vec![];
         };

@@ -8,6 +8,7 @@ use postgres::{Client, Config, NoTls};
 use zpg_core::catalog::Relation;
 use zpg_core::diff::{Diff, Op};
 use zpg_core::sql::{self, Stmt};
+use zpg_core::sqlctx::{Schema, SchemaTable};
 use zpg_core::header::quote_ident;
 use zpg_core::{Apply, Column, ForeignKey, QualName, Query, SnapRow, Snapshot};
 
@@ -225,6 +226,49 @@ pub fn catalog(c: &mut Client) -> Result<Vec<Relation>, String> {
             rows: r.get(3),
         })
         .collect())
+}
+
+/// The catalog's relations with their columns, for `.sql` files.
+pub fn schema(c: &mut Client) -> Result<Schema, String> {
+    let mut columns: HashMap<QualName, Vec<Column>> = HashMap::new();
+    let rows = c
+        .query(
+            "SELECT n.nspname::text, c.relname::text, a.attname::text, format_type(a.atttypid, a.atttypmod),
+                    a.attnotnull, a.atthasdef OR a.attidentity <> '', a.attgenerated <> ''
+             FROM pg_attribute a
+             JOIN pg_class c ON c.oid = a.attrelid
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+               AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+               AND n.nspname !~ '^pg_(toast|temp)'
+               AND NOT c.relispartition
+               AND has_table_privilege(c.oid, 'SELECT')
+               AND a.attnum > 0 AND NOT a.attisdropped
+             ORDER BY 1, 2, a.attnum",
+            &[],
+        )
+        .map_err(|e| fmt_err(&e))?;
+    for r in &rows {
+        columns
+            .entry(QualName::new(r.get::<_, String>(0), r.get::<_, String>(1)))
+            .or_default()
+            .push(Column {
+                name: r.get(2),
+                type_name: r.get(3),
+                not_null: r.get(4),
+                has_default: r.get(5),
+                generated: r.get(6),
+                enum_values: vec![],
+            });
+    }
+    let tables = catalog(c)?
+        .into_iter()
+        .map(|rel| SchemaTable {
+            columns: columns.remove(&rel.name).unwrap_or_default(),
+            rel,
+        })
+        .collect();
+    Ok(Schema { tables })
 }
 
 pub struct Defaults {

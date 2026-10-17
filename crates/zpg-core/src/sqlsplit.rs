@@ -83,18 +83,28 @@ pub fn split(text: &str) -> Vec<Range<usize>> {
     out
 }
 
+/// The statement the cursor at `offset` is in, including text typed after
+/// its last token; an empty range between statements.
+pub fn around(text: &str, offset: usize) -> Range<usize> {
+    match split(text).into_iter().rev().find(|r| r.start <= offset) {
+        Some(r) if offset <= r.end => r,
+        Some(r) if !text[r.end..offset].contains(';') => r.start..offset,
+        _ => offset..offset,
+    }
+}
+
 fn is_copy_from_stdin(stmt: &str) -> bool {
     let s = stmt.to_ascii_lowercase();
     s.starts_with("copy") && s.split_whitespace().collect::<Vec<_>>().windows(2).any(|w| w == ["from", "stdin"])
 }
 
 /// Whether the byte before `i` continues an identifier (so `$` or `E` at `i` is part of it).
-fn is_ident(b: &[u8], i: usize) -> bool {
+pub(crate) fn is_ident(b: &[u8], i: usize) -> bool {
     i > 0 && (b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_' || b[i - 1] >= 0x80)
 }
 
 /// `$tag$` or `$$` at the start of `s`.
-fn dollar_tag(s: &str) -> Option<&str> {
+pub(crate) fn dollar_tag(s: &str) -> Option<&str> {
     let rest = &s[1..];
     let end = rest.find('$')?;
     let tag = &rest[..end];
@@ -219,6 +229,15 @@ mod tests {
             parts("COPY t (a) FROM stdin;\n1\tit's; odd\n\\.\n\nselect 1;"),
             vec!["COPY t (a) FROM stdin", "select 1"]
         );
+    }
+
+    #[test]
+    fn statement_around_cursor() {
+        let text = "select 1;\nselect * from t \n;  ";
+        let at = |s: &str| text.find(s).unwrap();
+        assert_eq!(&text[around(text, at("1"))], "select 1");
+        assert_eq!(&text[around(text, at("from") + 7)], "select * from t ");
+        assert_eq!(around(text, text.len()), text.len()..text.len());
     }
 
     #[test]

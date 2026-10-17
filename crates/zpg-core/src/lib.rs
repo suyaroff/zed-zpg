@@ -4,6 +4,7 @@ pub mod diff;
 pub mod header;
 pub mod record;
 pub mod snapshot;
+pub mod sqlctx;
 pub mod sqlsplit;
 pub mod sql;
 pub mod table;

@@ -99,7 +99,7 @@ impl Server {
 
     /// Connections a statement at `offset` may run on: the `-- @conn` above
     /// it, the only configured one, or (ambiguous) all of them.
-    fn conns_for(&self, text: &str, offset: usize) -> Vec<String> {
+    pub(super) fn conns_for(&self, text: &str, offset: usize) -> Vec<String> {
         if let Some(c) = sqlsplit::conn_before(text, offset) {
             return vec![c];
         }
@@ -229,6 +229,7 @@ impl Server {
         let tags: Vec<&str> = outcomes.iter().map(|o| o.tag.as_str()).collect();
         show(conn, MessageType::INFO, format!("zpg: {} ({millis} ms)", tags.join("; ")))?;
         if tags.iter().any(|t| t.starts_with("CREATE") || t.starts_with("DROP") || t.starts_with("ALTER")) {
+            self.schemas.clear();
             let catalogs: Vec<String> = self
                 .docs
                 .iter()
