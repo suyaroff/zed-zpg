@@ -207,7 +207,10 @@ pub fn catalog(c: &mut Client) -> Result<Vec<Relation>, String> {
             "SELECT n.nspname::text, c.relname::text,
                     CASE c.relkind WHEN 'r' THEN 'table' WHEN 'p' THEN 'partitioned' WHEN 'v' THEN 'view'
                                    WHEN 'm' THEN 'matview' ELSE 'foreign' END,
-                    CASE WHEN c.relkind IN ('r', 'm') AND c.reltuples >= 0 THEN c.reltuples::bigint END
+                    CASE WHEN c.relkind IN ('r', 'm') THEN
+                        CASE WHEN c.reltuples >= 0 THEN c.reltuples::bigint
+                             ELSE pg_stat_get_live_tuples(c.oid) END
+                    END
              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
              WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
                AND n.nspname NOT IN ('pg_catalog', 'information_schema')
