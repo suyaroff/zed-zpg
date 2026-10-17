@@ -1,3 +1,4 @@
+mod activity;
 mod complete;
 mod edits;
 mod export;
@@ -63,6 +64,8 @@ const CMD_BACKREF: &str = "zpg.referencing";
 const CMD_EXPLAIN: &str = "zpg.explain";
 const CMD_EXPORT: &str = "zpg.export";
 const CMD_FILTER: &str = "zpg.filter";
+const CMD_ACTIVITY: &str = "zpg.activity";
+const CMD_SIGNAL: &str = "zpg.signal";
 
 /// How `refresh` changes the page it reloads.
 enum Reload {
@@ -157,7 +160,7 @@ struct Server {
     /// were read; `None` when reading failed.
     schemas: HashMap<String, (Instant, Option<Schema>)>,
     /// Runs waiting for the user's yes, by request id.
-    confirms: HashMap<i32, (String, query::RunTarget)>,
+    confirms: HashMap<i32, query::Pending>,
     /// Errors Postgres found in `.sql` buffers on open/save; dropped on edit.
     checked: HashMap<String, Vec<Issue>>,
     /// The statement running now, for the thread that reads messages meanwhile.
@@ -217,6 +220,8 @@ pub fn run() -> Res<()> {
                 CMD_EXPORT,
                 CMD_FILTER,
                 running::CMD_CANCEL,
+                CMD_ACTIVITY,
+                CMD_SIGNAL,
             ]
                 .map(String::from)
                 .to_vec(),
@@ -671,6 +676,18 @@ impl Server {
                 let num = |i: usize| p.arguments.get(i).and_then(Value::as_u64).map(|n| n as u32);
                 match p.command.as_str() {
                     CMD_REFRESH => self.refresh(conn, &key, Reload::Same)?,
+                    CMD_ACTIVITY => {
+                        if let Some(line) = num(1) {
+                            self.activity(conn, &key, line)?;
+                        }
+                    }
+                    CMD_SIGNAL => {
+                        let pid = p.arguments.get(1).and_then(Value::as_i64).and_then(|n| i32::try_from(n).ok());
+                        if let Some(pid) = pid {
+                            let terminate = p.arguments.get(2).and_then(Value::as_str) == Some("terminate");
+                            self.signal(conn, &key, pid, terminate, false)?;
+                        }
+                    }
                     CMD_FILTER => {
                         if let Some(filter) = p.arguments.get(1).and_then(Value::as_str) {
                             self.refresh(conn, &key, Reload::Filter(filter.to_string()))?;
@@ -1571,6 +1588,15 @@ impl Server {
                         vec![arg(), Value::from(range.start.line)],
                     ));
                 }
+                if self.caps.show_document
+                    && let Some(c) = catalog::conn_at(&text, range.start.line)
+                {
+                    out.push(command(
+                        format!("zpg: Server activity of {c}"),
+                        CMD_ACTIVITY,
+                        vec![arg(), Value::from(range.start.line)],
+                    ));
+                }
                 out.push(command("zpg: Refresh catalog".into(), CMD_REFRESH, vec![arg()]));
                 if self.caps.show_document {
                     out.push(command("zpg: Open settings file".into(), CMD_CONFIG, vec![arg()]));
@@ -1598,7 +1624,8 @@ impl Server {
                 return self.sql_actions(doc, key, range);
             }
             Kind::Result => {
-                let mut out = self.result_actions(key, &path);
+                let mut out = self.pid_actions(key, &path, &text, range.start.line);
+                out.extend(self.result_actions(key, &path));
                 if self.caps.show_document {
                     out.extend(export::actions(key, Kind::Result));
                 }

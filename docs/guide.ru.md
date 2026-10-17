@@ -182,6 +182,10 @@ public.v_active_users    view
 - `ctrl-.` → **zpg: Refresh catalog** перечитывает список таблиц. После `CREATE`/`DROP`/`ALTER`, запущенных из `.sql`, каталог обновляется сам.
 - **Hover** на строке таблицы показывает её колонки с типами и комментариями, размер на диске (`pg_total_relation_size`) и индексы.
 - **Структура (DDL).** `ctrl-.` на строке таблицы → **zpg: Show DDL of public.users** открывает `.zpg/<подключение>/public.users.ddl.sql`: `CREATE TABLE` с колонками, default, identity и generated, ограничениями (PK, UNIQUE, CHECK, FK, EXCLUDE), а следом отдельные индексы, триггеры и `COMMENT ON`. Для view и materialized view — `CREATE VIEW … AS` с текстом запроса. DDL собирается из системного каталога, а не через `pg_dump`: владельцы, права и параметры хранения не выводятся. Из страницы таблицы то же самое: `ctrl-.` → **zpg: Show DDL**.
+- **Активность сервера.** `ctrl-.` на любой строке секции подключения → **zpg: Server activity of local** открывает `.zpg/local/activity.pgres`: кто подключён и что выполняет. Колонки: `pid`, пользователь, база, приложение, адрес клиента, `state`, сколько идёт транзакция (`xact_age`) и запрос (`query_age`), чего ждёт (`waiting`), `blocked_by` — pid'ы сессий, держащих нужную ей блокировку, и сам запрос. Сначала активные, самые долгие транзакции выше. Обновить: **zpg: Run again**.
+  - `ctrl-.` на строке → **zpg: Cancel the query of pid N** (`pg_cancel_backend`: прерывает текущий запрос, сессия остаётся) или **zpg: Terminate backend pid N…** (`pg_terminate_backend`: закрывает сессию, её транзакция откатывается; zpg сначала спросит). После этого список обновится.
+  - Эти действия есть в любом результате с колонкой `pid`, например в вашем собственном запросе к `pg_stat_activity` или `pg_locks`.
+  - Чужие сессии может прерывать только суперпользователь или роль с `pg_signal_backend`.
 - **Удаление таблицы.** `ctrl-.` на строке таблицы → **zpg: Drop public.users…** открывает файл `.zpg/<подключение>/drop-public.users.sql` с готовым запросом. Тип объекта подставляется сам: `DROP TABLE`, `DROP VIEW`, `DROP MATERIALIZED VIEW` или `DROP FOREIGN TABLE`. Проверьте запрос и нажмите ▶, только тогда таблица будет удалена. Чтобы удалить и зависимые объекты (view, внешние ключи), допишите `CASCADE`.
 
 ---
@@ -512,8 +516,8 @@ zpg знает таблицы и колонки подключения, на к�
 
 В просмотре строки: **zpg: Apply changes**, **zpg: Refresh row (discard changes)**.
 В `.sql`: **zpg: Run statement on …**, **zpg: Run selection on …**, **zpg: Explain statement on …**, **zpg: Explain analyze statement on …**.
-В результате запроса: **zpg: Edit rows in table**, **zpg: Run again**, **zpg: Export result as CSV / JSON**.
-В каталоге: **zpg: Open <таблица>**, **zpg: Show DDL of <таблица>**, **zpg: Drop <таблица>…**, **zpg: Refresh catalog** и **zpg: Open settings file**.
+В результате запроса: **zpg: Cancel the query of pid N** / **zpg: Terminate backend pid N…** (если есть колонка `pid`), **zpg: Edit rows in table**, **zpg: Run again**, **zpg: Export result as CSV / JSON**.
+В каталоге: **zpg: Server activity of <подключение>**, **zpg: Open <таблица>**, **zpg: Show DDL of <таблица>**, **zpg: Drop <таблица>…**, **zpg: Refresh catalog** и **zpg: Open settings file**.
 
 ---
 

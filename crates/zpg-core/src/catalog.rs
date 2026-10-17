@@ -72,6 +72,14 @@ pub fn entry_at(text: &str, line: u32) -> Option<(String, QualName)> {
     None
 }
 
+/// The connection whose section `line` is in (its `[name]` line included).
+pub fn conn_at(text: &str, line: u32) -> Option<String> {
+    text.split('\n')
+        .take(line as usize + 1)
+        .filter_map(|l| l.trim().strip_prefix('[')?.strip_suffix(']').map(String::from))
+        .last()
+}
+
 /// The kind written after the relation name on `line`: table, view, matview…
 pub fn kind_at(text: &str, line: u32) -> Option<String> {
     let l = text.split('\n').nth(line as usize)?.trim();
@@ -135,5 +143,14 @@ mod tests {
             drop_statement("view", &QualName::new("public", "My View")),
             r#"DROP VIEW "public"."My View""#
         );
+    }
+
+    #[test]
+    fn connection_of_a_line() {
+        let text = "# zpg v1 catalog\n\n[local]\npublic.a  table\n\n[prod]\n! error\n";
+        assert_eq!(conn_at(text, 1), None);
+        assert_eq!(conn_at(text, 2).as_deref(), Some("local"));
+        assert_eq!(conn_at(text, 4).as_deref(), Some("local"));
+        assert_eq!(conn_at(text, 6).as_deref(), Some("prod"));
     }
 }

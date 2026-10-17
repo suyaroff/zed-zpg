@@ -231,7 +231,8 @@ impl Server {
                 selection,
                 confirmed: true,
             };
-            return self.confirm(conn, key, again, format!("zpg: {}. Run on {conn_name}?", dangers.join("; ")));
+            let message = format!("zpg: {}. Run on {conn_name}?", dangers.join("; "));
+            return self.confirm(conn, Pending::Run(key.to_string(), again), message);
         }
         let (max_rows, timeout) = (self.settings.max_result_rows, self.settings.statement_timeout_ms);
         let started = Instant::now();
@@ -274,20 +275,6 @@ impl Server {
         let Some((k, out)) = outcomes.iter().enumerate().rev().find(|(_, o)| !o.columns.is_empty()) else {
             return Ok(());
         };
-        let edit = self
-            .db
-            .client(&self.settings, conn_name)
-            .ok()
-            .and_then(|c| db::edit_source(c, &out.columns));
-        let st = ResultState {
-            conn: conn_name.to_string(),
-            sql: stmts[k].to_string(),
-            columns: out.columns.clone(),
-            edit,
-            snap: result_snapshot(conn_name, &out.columns, &out.rows, self.settings.max_cell_width),
-            more: out.more,
-            millis,
-        };
         let root = self.zpg_root(&path);
         state::ensure_root(&root)?;
         let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "query".into());
@@ -295,15 +282,42 @@ impl Server {
             .join(encode_name(conn_name))
             .join("results")
             .join(format!("{}.pgres", encode_name(&stem)));
-        let rendered = render_result(&st);
-        state::save(&target, &st)?;
-        self.results.insert(target.clone(), st);
-        self.write_file(conn, &target, rendered)?;
-        self.show_document(conn, &target)
+        self.show_result(conn, conn_name, stmts[k], out, millis, &target)
     }
 
-    /// Asks before running `target`; the answer comes back as a response (see `answer`).
-    fn confirm(&mut self, conn: &Connection, key: &str, target: RunTarget, message: String) -> Res<()> {
+    /// Writes the rows of `sql` as the `.pgres` at `target` and opens it.
+    pub(super) fn show_result(
+        &mut self,
+        conn: &Connection,
+        conn_name: &str,
+        sql: &str,
+        out: &db::Outcome,
+        millis: u128,
+        target: &Path,
+    ) -> Res<()> {
+        let edit = self
+            .db
+            .client(&self.settings, conn_name)
+            .ok()
+            .and_then(|c| db::edit_source(c, &out.columns));
+        let st = ResultState {
+            conn: conn_name.to_string(),
+            sql: sql.to_string(),
+            columns: out.columns.clone(),
+            edit,
+            snap: result_snapshot(conn_name, &out.columns, &out.rows, self.settings.max_cell_width),
+            more: out.more,
+            millis,
+        };
+        let rendered = render_result(&st);
+        state::save(target, &st)?;
+        self.results.insert(target.to_path_buf(), st);
+        self.write_file(conn, target, rendered)?;
+        self.show_document(conn, target)
+    }
+
+    /// Asks before doing `pending`; the answer comes back as a response (see `answer`).
+    pub(super) fn confirm(&mut self, conn: &Connection, pending: Pending, message: String) -> Res<()> {
         let id = self.send_request::<ShowMessageRequest>(
             conn,
             ShowMessageRequestParams {
@@ -321,17 +335,22 @@ impl Server {
                 ]),
             },
         )?;
-        self.confirms.insert(id, (key.to_string(), target));
+        self.confirms.insert(id, pending);
         Ok(())
     }
 
     /// The client's answer to a `confirm` question.
     pub(super) fn answer(&mut self, conn: &Connection, id: i32, result: Option<Value>) -> Res<()> {
-        let Some((key, target)) = self.confirms.remove(&id) else {
+        let Some(pending) = self.confirms.remove(&id) else {
             return Ok(());
         };
-        let chosen = result.as_ref().and_then(|r| r.get("title")).and_then(Value::as_str);
-        if chosen == Some(RUN) { self.run_sql(conn, &key, target) } else { Ok(()) }
+        if result.as_ref().and_then(|r| r.get("title")).and_then(Value::as_str) != Some(RUN) {
+            return Ok(());
+        }
+        match pending {
+            Pending::Run(key, target) => self.run_sql(conn, &key, target),
+            Pending::Terminate(key, pid) => self.signal(conn, &key, pid, true, true),
+        }
     }
 
     /// Underlines what Postgres refuses to parse in the `.sql` buffer `key`.
@@ -700,6 +719,14 @@ const MAX_CHECKED: usize = 300;
 /// Arguments of the run command: bytes `start..end` of the buffer, and the
 /// hash of the text they held when the command was made, so that a stale
 /// command can find its statement again (see `relocate`).
+/// What waits for the user's *Run*.
+pub(super) enum Pending {
+    /// Running statements of a `.sql` buffer.
+    Run(String, RunTarget),
+    /// Terminating a backend listed in a `.pgres`.
+    Terminate(String, i32),
+}
+
 #[derive(Clone)]
 pub(super) struct RunTarget {
     start: usize,
