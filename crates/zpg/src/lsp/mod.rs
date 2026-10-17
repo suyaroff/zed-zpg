@@ -61,6 +61,7 @@ const CMD_DDL: &str = "zpg.ddl";
 const CMD_BACKREF: &str = "zpg.referencing";
 const CMD_EXPLAIN: &str = "zpg.explain";
 const CMD_EXPORT: &str = "zpg.export";
+const CMD_FILTER: &str = "zpg.filter";
 
 /// How `refresh` changes the page it reloads.
 enum Reload {
@@ -68,6 +69,8 @@ enum Reload {
     Page(u32),
     /// A new `order`, from page 1.
     Order(String),
+    /// A new `where`, from page 1.
+    Filter(String),
 }
 
 type Res<T> = Result<T, Box<dyn Error + Send + Sync>>;
@@ -207,6 +210,7 @@ pub fn run() -> Res<()> {
                 CMD_BACKREF,
                 CMD_EXPLAIN,
                 CMD_EXPORT,
+                CMD_FILTER,
             ]
                 .map(String::from)
                 .to_vec(),
@@ -448,7 +452,6 @@ fn line_value(snap: &Snapshot, line: &str, col: usize) -> Option<CellValue> {
     }
 }
 
-/// Text values of the FK columns, if all are plain values.
 /// The text values of columns `cols`; `None` when any is NULL or missing.
 fn cell_texts(cols: &[usize], value_of: impl Fn(usize) -> Option<CellValue>) -> Option<Vec<String>> {
     cols.iter()
@@ -658,6 +661,11 @@ impl Server {
                 let num = |i: usize| p.arguments.get(i).and_then(Value::as_u64).map(|n| n as u32);
                 match p.command.as_str() {
                     CMD_REFRESH => self.refresh(conn, &key, Reload::Same)?,
+                    CMD_FILTER => {
+                        if let Some(filter) = p.arguments.get(1).and_then(Value::as_str) {
+                            self.refresh(conn, &key, Reload::Filter(filter.to_string()))?;
+                        }
+                    }
                     CMD_SORT => {
                         if let Some(order) = p.arguments.get(1).and_then(Value::as_str) {
                             self.refresh(conn, &key, Reload::Order(order.to_string()))?;
@@ -1112,6 +1120,10 @@ impl Server {
             Reload::Page(p) => Some(p.max(1)),
             Reload::Order(o) => {
                 query.order = o;
+                Some(1)
+            }
+            Reload::Filter(f) => {
+                query.filter = f;
                 Some(1)
             }
         };
@@ -1626,6 +1638,15 @@ impl Server {
                 out.push(command("zpg: Preview SQL".into(), CMD_PREVIEW, vec![arg()]));
             }
         }
+        if !pending
+            && parsed.rows.iter().any(|r| r.line == range.start.line)
+            && let Some(line) = text.split('\n').nth(range.start.line as usize)
+        {
+            out.extend(filter_actions(snap, key, line, range.start.character));
+        }
+        if !pending && !snap.query.filter.trim().is_empty() {
+            out.push(command("zpg: Clear filter (where=)".into(), CMD_FILTER, vec![arg(), Value::from("")]));
+        }
         if !pending {
             let page = parsed.header.as_ref().map_or(snap.query.page, |h| h.query.page);
             let pages = snap.total.map(|t| t.pages(snap.query.limit));
@@ -1862,6 +1883,68 @@ impl Server {
 }
 
 /// LSP's relative encoding of (line, start, end, type) spans.
+/// Longest value offered as a filter.
+const MAX_FILTER_VALUE: usize = 200;
+
+/// *Filter* actions for the cell at `ch` of a data `line`: rows with the
+/// same value or a different one (or NULL / not NULL), added to `where`.
+fn filter_actions(snap: &Snapshot, key: &str, line: &str, ch: u32) -> Vec<CodeActionOrCommand> {
+    let Some(i) = column_at(snap, line, ch) else {
+        return vec![];
+    };
+    // The loaded value, uncut; without a key, the cell if it isn't cut.
+    let value = match row_of_line(snap, line) {
+        Some(r) => Some(snap.rows[r].values[i].clone()),
+        None => match line_value(snap, line, i) {
+            Some(CellValue::Text(s)) if !snap.cell(i, &Some(s.clone()), &snap.widths()).1 => Some(Some(s)),
+            Some(CellValue::Null) => Some(None),
+            _ => None,
+        },
+    };
+    let Some(value) = value else {
+        return vec![];
+    };
+    let col = &snap.columns[i];
+    let name = display_ident(&col.name);
+    // Types without `=`: compare their text.
+    let lhs = match col.type_name.as_str() {
+        "json" | "xml" | "point" | "line" | "lseg" | "box" | "path" | "polygon" | "circle" => format!("{name}::text"),
+        _ => name.clone(),
+    };
+    let conds: Vec<(String, String)> = match &value {
+        None => vec![
+            (format!("{name} IS NULL"), format!("{name} IS NULL")),
+            (format!("{name} IS NOT NULL"), format!("{name} IS NOT NULL")),
+        ],
+        Some(v) if v.chars().count() <= MAX_FILTER_VALUE && !v.contains('\n') => {
+            let shown: String = v.chars().take(30).collect();
+            let shown = if shown.len() < v.len() { format!("{shown}…") } else { shown };
+            vec![
+                (format!("{lhs} = {}", sql_literal(v)), format!("{name} = '{shown}'")),
+                (format!("{lhs} <> {}", sql_literal(v)), format!("{name} <> '{shown}'")),
+            ]
+        }
+        Some(_) => vec![],
+    };
+    let old = snap.query.filter.trim();
+    conds
+        .into_iter()
+        .map(|(cond, title)| {
+            let filter = match old {
+                "" => cond,
+                o if o.to_lowercase().contains(" or ") => format!("({o}) AND {cond}"),
+                o => format!("{o} AND {cond}"),
+            };
+            let verb = if old.is_empty() { "Filter" } else { "Also filter" };
+            command(
+                format!("zpg: {verb}: {title}"),
+                CMD_FILTER,
+                vec![Value::String(key.to_string()), Value::String(filter)],
+            )
+        })
+        .collect()
+}
+
 /// *Referencing rows* actions for the row on `line` (any line of a row view).
 fn backref_actions(snap: &Snapshot, key: &str, line: u32) -> Vec<CodeActionOrCommand> {
     snap.referenced_by
