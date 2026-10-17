@@ -626,31 +626,10 @@ impl Server {
     /// Opens the relation's DDL as a `.sql` next to its page; `line` is the
     /// catalog line when called from the catalog.
     pub(super) fn show_ddl(&mut self, conn: &Connection, key: &str, line: Option<u32>) -> Res<()> {
-        let Some(doc) = self.docs.get(key) else {
+        let Some((conn_name, table, dir)) = self.relation_at(key, line) else {
             return Ok(());
         };
-        let Some(path) = doc.path() else {
-            return Ok(());
-        };
-        let (conn_name, table, target) = match (doc.kind(), line) {
-            (Kind::Catalog, Some(line)) => {
-                let Some((c, t)) = catalog::entry_at(&doc.text, line) else {
-                    return Ok(());
-                };
-                let Some(root) = path.parent() else {
-                    return Ok(());
-                };
-                let target = root.join(encode_name(&c)).join(format!("{}.ddl.sql", t.file_stem()));
-                (c, t, target)
-            }
-            (Kind::Table, _) => {
-                let Some(snap) = snapshot(&mut self.snaps, &path) else {
-                    return Ok(());
-                };
-                (snap.conn.clone(), snap.table.clone(), path.with_extension("ddl.sql"))
-            }
-            _ => return Ok(()),
-        };
+        let target = dir.join(format!("{}.ddl.sql", table.file_stem()));
         let ddl = match self.db.client(&self.settings, &conn_name).and_then(|c| db::ddl(c, &table)) {
             Ok(d) => d,
             Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),

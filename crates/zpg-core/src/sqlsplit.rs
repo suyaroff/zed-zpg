@@ -5,7 +5,9 @@ use std::ops::Range;
 
 /// Byte ranges of the statements in `text`, without the `;` and without
 /// leading/trailing whitespace and comments. Semicolons inside strings,
-/// quoted identifiers, dollar-quoted bodies and comments don't split.
+/// quoted identifiers, dollar-quoted bodies and comments don't split. A
+/// line starting with `\` is a psql meta-command (`\restrict` in pg_dump
+/// output, `\set`…): it ends the statement before it and is left out.
 pub fn split(text: &str) -> Vec<Range<usize>> {
     let b = text.as_bytes();
     let mut out = vec![];
@@ -63,6 +65,11 @@ pub fn split(text: &str) -> Vec<Range<usize>> {
                 }
                 None => i += 1,
             },
+            b'\\' if text[text[..i].rfind('\n').map_or(0, |p| p + 1)..i].trim().is_empty() => {
+                push(text, start..i, &mut out);
+                i = text[i..].find('\n').map_or(b.len(), |p| i + p + 1);
+                start = i;
+            }
             b';' => {
                 push(text, start..i, &mut out);
                 i += 1;
@@ -225,6 +232,10 @@ mod tests {
         assert_eq!(parts("do $body$ begin perform 1; end $body$"), vec!["do $body$ begin perform 1; end $body$"]);
         assert_eq!(parts("select a$1 from t; select 2"), vec!["select a$1 from t", "select 2"]);
         assert!(parts("  -- only a comment\n").is_empty());
+        assert_eq!(
+            parts("\\restrict abc\nset x = 1;\n  \\set ON_ERROR_STOP on\nselect 'a\n\\b';\n\\unrestrict abc\n"),
+            vec!["set x = 1", "select 'a\n\\b'"]
+        );
         assert_eq!(
             parts("COPY t (a) FROM stdin;\n1\tit's; odd\n\\.\n\nselect 1;"),
             vec!["COPY t (a) FROM stdin", "select 1"]

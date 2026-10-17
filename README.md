@@ -44,7 +44,7 @@ Details: [install](docs/ru/01-install.md), [connections and settings](docs/ru/02
 
 Everything works through Zed's own actions: **F12** (go to definition), **hover**, **completion** and **`ctrl-.`** (code actions).
 
-**Catalog** ([docs](docs/ru/04-catalog.md)) — `.zpg/catalog.pgdb` lists every connection with its tables and row estimates. Hover shows columns, size and indexes; *Show DDL* rebuilds `CREATE TABLE` with constraints, indexes, triggers and comments; *Drop…* opens the `DROP` to review.
+**Catalog** ([docs](docs/ru/04-catalog.md)) — `.zpg/catalog.pgdb` lists every connection with its tables and row estimates. Hover shows columns, size and indexes; *Show DDL* rebuilds `CREATE TABLE` with constraints, indexes, triggers and comments; *Back up (pg_dump)* writes `pg_dump --table` output into `.zpg/<conn>/backups/` (settings `pg_dump`, `pg_dump_args`); *Drop…* opens the `DROP` to review.
 
 **Table pages** ([docs](docs/ru/05-table.md)) — `.pgt` files with a header line for `where`, `order`, `columns`, `page`/`limit`, `width` and `apply`, and `total` rows matching. Sort by a column, filter by a cell's value, page with *Next/Last page (2/37)*. Typed hover for json, timestamps, arrays, bytea.
 

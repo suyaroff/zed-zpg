@@ -19,6 +19,7 @@
 |---|---|---|
 | **zpg: Open \<таблица\>** | курсор на строке таблицы | открывает страницу таблицы (то же, что F12) |
 | **zpg: Show DDL of \<таблица\>** | курсор на строке таблицы | `CREATE …` таблицы с индексами, триггерами, комментариями → [Каталог](04-catalog.md#структура-таблицы-ddl) |
+| **zpg: Back up \<таблица\> (pg_dump)** | курсор на строке таблицы | `pg_dump --table` в `.zpg/<подключение>/backups/` → [Бэкап](04-catalog.md#бэкап-таблицы-pg_dump) |
 | **zpg: Drop \<таблица\>… (opens the SQL to review and run)** | курсор на строке таблицы | открывает файл с `DROP` для проверки и запуска → [Каталог](04-catalog.md#удалить-таблицу) |
 | **zpg: Server activity of \<подключение\>** | строка внутри секции подключения | сессии сервера → [Администрирование](09-admin.md) |
 | **zpg: Refresh catalog** | всегда | перечитывает список таблиц |
@@ -39,6 +40,7 @@
 | **zpg: Refresh** / **Refresh (discard changes)** | всегда | перечитывает страницу и структуру из базы, отбрасывая правки |
 | **zpg: Apply changes manually (apply=manual)** / **on save (apply=save)** | всегда | переключает режим записи в шапке |
 | **zpg: Show DDL** | всегда | DDL таблицы |
+| **zpg: Back up \<таблица\> (pg_dump)** | всегда | бэкап таблицы через `pg_dump` |
 | **zpg: Export page as CSV / JSON / INSERT statements** | всегда | экспорт загруженной страницы → [Экспорт](10-export.md) |
 | **zpg: Export all rows matching where= as CSV** | всегда | экспорт всех строк через `COPY` |
 | **zpg: Rows of \<таблица\> referencing this (\<колонки\>)** | курсор на строке данных | строки другой таблицы, ссылающиеся на эту; по одному на внешний ключ, в конце меню → [Связи](07-relations.md#кто-ссылается-на-строку) |
@@ -70,11 +72,12 @@
 | **zpg: Cancel the query of pid N** | есть колонка `pid`, курсор на строке | `pg_cancel_backend` → [Администрирование](09-admin.md#прервать-запрос-или-сессию) |
 | **zpg: Terminate backend pid N…** | то же | `pg_terminate_backend`, после подтверждения |
 
-### Во время выполнения запроса
+### Во время выполнения запроса или pg_dump
 
 | Действие | Где | Что делает |
 |---|---|---|
 | **zpg: Cancel the statement running on \<подключение\>** | в любом файле, пока идёт запрос | отменяет его → [Отмена](08-sql.md#отмена-долгого-запроса) |
+| **zpg: Cancel pg_dump of \<таблица\>** | в любом файле, пока идёт бэкап | останавливает `pg_dump`, удаляет недописанный файл |
 
 ## Команды language server
 
@@ -86,7 +89,7 @@
 | `zpg.refresh`, `zpg.page`, `zpg.sort`, `zpg.filter` | Refresh, страницы, сортировка, фильтр |
 | `zpg.apply`, `zpg.previewSql` | Apply changes, Preview SQL |
 | `zpg.referencing` | Rows of … referencing this |
-| `zpg.ddl`, `zpg.drop` | Show DDL, Drop |
+| `zpg.ddl`, `zpg.drop`, `zpg.backup` | Show DDL, Drop, Back up |
 | `zpg.run`, `zpg.rerun`, `zpg.explain`, `zpg.editResult` | запуск, Run again, Explain, Edit rows in table |
 | `zpg.export` | все виды экспорта |
 | `zpg.activity`, `zpg.signal`, `zpg.cancel` | активность, Cancel/Terminate backend, отмена своего запроса |
@@ -105,6 +108,8 @@
 | `max_result_rows` | `1000` |
 | `statement_timeout_ms` | `60000` |
 | `check_sql` | `true` |
+| `pg_dump` | `"pg_dump"` |
+| `pg_dump_args` | `[]` |
 
 Переменные окружения: `ZPG_CONFIG` — путь к файлу настроек; `ZPG_ZED` — CLI Zed для `zpg open`/`zpg config`; `${VAR}` в строке подключения.
 
@@ -150,6 +155,8 @@
     ├── zpg_demo.orders.ddl.sql        # последний Show DDL
     ├── drop-zpg_demo.orders.sql       # последний Drop…
     ├── activity.pgres                 # активность сервера
+    ├── backups/
+    │   └── zpg_demo.orders-20261018-021333.sql   # бэкапы pg_dump (.sql, .dump, .tar)
     ├── exports/
     │   └── zpg_demo.orders.csv        # экспорт (.csv, .json, .sql)
     ├── results/
@@ -200,6 +207,9 @@
 | `ssh to …: Host key verification failed` | сервера нет в `known_hosts` | один раз зайдите на сервер `ssh` из терминала |
 | `ssh to …: Permission denied (publickey…)` | ключ не подошёл или не в agent | `ssh-add`, проверьте `~/.ssh/config`; вход по паролю не поддерживается |
 | `ssh to …: no tunnel after 20 s` | ssh завис на подключении | проверьте доступность сервера и `ProxyJump` |
+| `can't run pg_dump: No such file or directory` | `pg_dump` не установлен или не в `PATH` | поставьте `postgresql-client` или укажите путь в `"pg_dump"` |
+| `pg_dump failed: … server version mismatch` | `pg_dump` старше сервера не умеет | укажите в `"pg_dump"` версию не ниже серверной |
+| `pg_dump's directory format can't be written to one file` | в `pg_dump_args` стоит `-Fd` | используйте `-Fc` или обычный формат |
 
 ### SQL
 

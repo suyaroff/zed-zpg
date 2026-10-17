@@ -1,4 +1,5 @@
 mod activity;
+mod backup;
 mod complete;
 mod edits;
 mod export;
@@ -66,6 +67,7 @@ const CMD_EXPORT: &str = "zpg.export";
 const CMD_FILTER: &str = "zpg.filter";
 const CMD_ACTIVITY: &str = "zpg.activity";
 const CMD_SIGNAL: &str = "zpg.signal";
+const CMD_BACKUP: &str = "zpg.backup";
 
 /// How `refresh` changes the page it reloads.
 enum Reload {
@@ -222,6 +224,7 @@ pub fn run() -> Res<()> {
                 running::CMD_CANCEL,
                 CMD_ACTIVITY,
                 CMD_SIGNAL,
+                CMD_BACKUP,
             ]
                 .map(String::from)
                 .to_vec(),
@@ -716,6 +719,7 @@ impl Server {
                     }
                     CMD_PREVIEW => self.preview(conn, &key)?,
                     CMD_DDL => self.show_ddl(conn, &key, num(1))?,
+                    CMD_BACKUP => self.backup(conn, &key, num(1))?,
                     CMD_RUN => {
                         if let Some(target) = query::RunTarget::from_args(&p.arguments) {
                             self.run_sql(conn, &key, target)?;
@@ -1583,6 +1587,11 @@ impl Server {
                         vec![arg(), Value::from(range.start.line)],
                     ));
                     out.push(command(
+                        format!("zpg: Back up {table} (pg_dump)"),
+                        CMD_BACKUP,
+                        vec![arg(), Value::from(range.start.line)],
+                    ));
+                    out.push(command(
                         format!("zpg: Drop {table}… (opens the SQL to review and run)"),
                         CMD_DROP,
                         vec![arg(), Value::from(range.start.line)],
@@ -1711,6 +1720,7 @@ impl Server {
         }
         if self.caps.show_document {
             out.push(command("zpg: Show DDL".into(), CMD_DDL, vec![arg()]));
+            out.push(command(format!("zpg: Back up {} (pg_dump)", snap.table), CMD_BACKUP, vec![arg()]));
             out.extend(export::actions(key, Kind::Table));
         }
         out.push(command(

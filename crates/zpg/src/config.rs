@@ -60,6 +60,10 @@ pub struct Settings {
     pub statement_timeout_ms: u64,
     /// Have Postgres parse the statements of `.sql` files on open and save, to underline errors.
     pub check_sql: bool,
+    /// The `pg_dump` program for backups.
+    pub pg_dump: String,
+    /// Added to every `pg_dump` command line, e.g. `["--column-inserts"]`.
+    pub pg_dump_args: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -89,6 +93,8 @@ impl Default for Settings {
             max_result_rows: 1000,
             statement_timeout_ms: 60_000,
             check_sql: true,
+            pg_dump: "pg_dump".into(),
+            pg_dump_args: vec![],
         }
     }
 }
@@ -117,6 +123,10 @@ pub const TEMPLATE: &str = r#"// zpg settings, shared by all projects. Keep this
   // "statement_timeout_ms": 60000,
   // Underline errors in .sql files on open and save (Postgres parses them, nothing runs):
   // "check_sql": true,
+  // Table backups (catalog or table page: ctrl-. → Back up): the program and extra arguments,
+  // e.g. "pg_dump": "/usr/lib/postgresql/16/bin/pg_dump", "pg_dump_args": ["--column-inserts"]
+  // "pg_dump": "pg_dump",
+  // "pg_dump_args": [],
 }
 "#;
 

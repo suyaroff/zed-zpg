@@ -87,6 +87,45 @@ DDL собирается из системного каталога, а не ч�
 
 То же со страницы таблицы: `ctrl-.` → **zpg: Show DDL**.
 
+## Бэкап таблицы (pg_dump)
+
+`ctrl-.` на строке таблицы → **zpg: Back up zpg_demo.orders (pg_dump)**. zpg запускает `pg_dump --table zpg_demo.orders` и сохраняет результат в `.zpg/local/backups/zpg_demo.orders-20261018-021333.sql` — структуру таблицы, её индексы, ограничения, триггеры и все данные. Внизу: `zpg: backed up zpg_demo.orders to .zpg/local/backups/… (7 kB)`, файл откроется.
+
+```sql
+-- zpg: pg_dump of zpg_demo.orders on local, 2026-10-18 02:13:33.
+-- Restore with psql (it has COPY data that ▶ can't run): psql -d <database> -f <this file>
+
+--
+-- PostgreSQL database dump
+--
+…
+CREATE TABLE zpg_demo.orders ( … );
+…
+COPY zpg_demo.orders (id, customer_id, status, created_at, total, comment) FROM stdin;
+1	1	paid	2026-09-28 01:40:44.321115+05	64.90	\N
+…
+\.
+```
+
+- Нужен `pg_dump` из клиентских утилит PostgreSQL (`postgresql-client`), не старше сервера. Если он не в `PATH` или нужна другая версия, укажите путь в настройке `"pg_dump"`, см. [Подключения](02-connections.md#все-параметры).
+- Подключение то же, что у zpg, включая SSH-туннель; пароль передаётся через переменную окружения `PGPASSWORD`, а не в командной строке.
+- Пока `pg_dump` работает, в строке состояния **zpg: pg_dump of …**; отменить — `ctrl-.` → **zpg: Cancel pg_dump of …**. Недописанный файл удаляется.
+- Дополнительные аргументы — настройка `"pg_dump_args"`, добавляется к каждому запуску:
+
+  | `pg_dump_args` | Что получится |
+  |---|---|
+  | `[]` (по умолчанию) | SQL-файл: `CREATE TABLE` + данные через `COPY` |
+  | `["--data-only"]` | только данные |
+  | `["--schema-only"]` | только структура |
+  | `["--clean", "--if-exists"]` | в начале `DROP TABLE IF EXISTS`, чтобы восстановить поверх существующей таблицы |
+  | `["--column-inserts"]` | данные как `INSERT` — такой файл можно выполнить и из zpg (выделить всё → **Run selection**) |
+  | `["-Fc"]` | сжатый формат `pg_dump` → файл `.dump` для `pg_restore`, в редакторе не открывается |
+
+- **Восстановить**: `psql -d база -f файл.sql` (или `pg_restore -d база файл.dump`). Из zpg обычный SQL-бэкап выполнить нельзя: данные в нём идут блоком `COPY … FROM stdin`, который понимает только `psql`.
+- Бэкап — того, что в базе: незаписанные правки страницы в него не попадают.
+
+С той же таблицы на её странице: `ctrl-.` → **zpg: Back up … (pg_dump)**.
+
 ## Удалить таблицу
 
 `ctrl-.` на строке таблицы → **zpg: Drop zpg_demo.events…**. zpg ничего не удаляет сам, а открывает `.zpg/local/drop-zpg_demo.events.sql` с готовым запросом:

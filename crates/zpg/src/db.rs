@@ -175,6 +175,8 @@ pub struct Db {
     tunnels: HashMap<String, Tunnel>,
     /// Whether each client's connection uses TLS, which its cancel request needs too.
     tls: HashMap<String, bool>,
+    /// What each client connected with, through its tunnel if any.
+    configs: HashMap<String, Config>,
 }
 
 impl Db {
@@ -182,6 +184,46 @@ impl Db {
         self.clients.clear();
         self.tunnels.clear();
         self.tls.clear();
+        self.configs.clear();
+    }
+
+    /// libpq environment (`PGHOST`, `PGPASSWORD`…) for a tool like `pg_dump`
+    /// to reach the database of `conn` as its client does, password off the
+    /// command line. Connect with `client` first.
+    pub fn pg_env(&self, conn: &str) -> Option<Vec<(&'static str, String)>> {
+        let cfg = self.configs.get(conn)?;
+        let mut env = vec![("PGAPPNAME", "zpg pg_dump".to_string())];
+        match cfg.get_hosts().first() {
+            Some(Host::Tcp(h)) => env.push(("PGHOST", h.clone())),
+            #[cfg(unix)]
+            Some(Host::Unix(dir)) => env.push(("PGHOST", dir.display().to_string())),
+            _ => {}
+        }
+        if let Some(p) = cfg.get_ports().first() {
+            env.push(("PGPORT", p.to_string()));
+        }
+        if let Some(u) = cfg.get_user() {
+            env.push(("PGUSER", u.to_string()));
+        }
+        if let Some(p) = cfg.get_password() {
+            env.push(("PGPASSWORD", String::from_utf8_lossy(p).into_owned()));
+        }
+        if let Some(d) = cfg.get_dbname() {
+            env.push(("PGDATABASE", d.to_string()));
+        }
+        if let Some(o) = cfg.get_options() {
+            env.push(("PGOPTIONS", o.to_string()));
+        }
+        if let Some(t) = cfg.get_connect_timeout() {
+            env.push(("PGCONNECT_TIMEOUT", t.as_secs().max(1).to_string()));
+        }
+        let ssl = match cfg.get_ssl_mode() {
+            SslMode::Disable => "disable",
+            SslMode::Require => "require",
+            _ => "prefer",
+        };
+        env.push(("PGSSLMODE", ssl.to_string()));
+        Some(env)
     }
 
     /// For the client of `conn` as it is now; connect with `client` first.
@@ -216,6 +258,7 @@ impl Db {
             let c = connect(&cfg)?;
             self.clients.insert(conn.to_string(), c);
             self.tls.insert(conn.to_string(), uses_tls(&cfg));
+            self.configs.insert(conn.to_string(), cfg);
         }
         Ok(self.clients.get_mut(conn).unwrap())
     }
