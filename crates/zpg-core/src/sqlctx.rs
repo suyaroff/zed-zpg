@@ -202,14 +202,14 @@ fn dotted(toks: &[Token], i: usize) -> Option<(Vec<String>, usize)> {
     Some((parts, j))
 }
 
-/// Tables after FROM / JOIN / UPDATE / INTO / TABLE (and the rest of a
+/// Tables after FROM / JOIN / UPDATE / INTO / TABLE / TRUNCATE (and the rest of a
 /// comma-separated FROM list), with their aliases.
 pub fn tables_in(sql: &str) -> Vec<TableRef> {
     let toks = code(sql);
     let mut out = vec![];
     let mut i = 0;
     while i < toks.len() {
-        if !toks[i].is_word(&["from", "join", "update", "into", "table"]) {
+        if !toks[i].is_word(&["from", "join", "update", "into", "table", "truncate"]) {
             i += 1;
             continue;
         }
@@ -217,7 +217,7 @@ pub fn tables_in(sql: &str) -> Vec<TableRef> {
         let into = toks[i].is_word(&["into"]);
         i += 1;
         loop {
-            while toks.get(i).is_some_and(|t| t.is_word(&["only", "lateral", "if", "not", "exists"])) {
+            while toks.get(i).is_some_and(|t| t.is_word(&["only", "lateral", "if", "not", "exists", "table"])) {
                 i += 1;
             }
             let Some((parts, next)) = dotted(&toks, i).filter(|(p, _)| p.len() <= 2) else {
@@ -623,7 +623,8 @@ mod tests {
         assert!(danger("update t set a = (select b from c where c.id = t.id)").is_some());
         assert!(danger("DELETE FROM audit.log").unwrap().ends_with("of audit.log"));
         assert_eq!(danger("delete from t using u where t.id = u.id"), None);
-        assert!(danger("-- note\ntruncate t").is_some());
+        assert_eq!(danger("-- note\ntruncate t").as_deref(), Some("TRUNCATE deletes every row of t"));
+        assert_eq!(danger("truncate table only t").as_deref(), Some("TRUNCATE deletes every row of t"));
         assert_eq!(danger("drop table t").as_deref(), Some("DROP TABLE can't be undone"));
         assert!(danger("alter table t drop column c").is_some());
         assert!(danger("alter table t drop c").is_some());
