@@ -765,6 +765,18 @@ pub struct RunError {
     pub position: Option<usize>,
 }
 
+/// Has Postgres parse and analyze `sql` without running it. On an error from
+/// the server: its SQLSTATE, message and position; other failures are `Ok`.
+pub fn check(c: &mut Client, sql: &str) -> Result<(), (String, RunError)> {
+    match c.prepare(sql) {
+        Err(e) if e.as_db_error().is_some() => {
+            let code = e.code().map_or(String::new(), |c| c.code().to_string());
+            Err((code, run_err(0, &e)))
+        }
+        _ => Ok(()),
+    }
+}
+
 fn run_err(stmt: usize, e: &postgres::Error) -> RunError {
     let position = e.as_db_error().and_then(|d| match d.position() {
         Some(postgres::error::ErrorPosition::Original(p)) => Some(*p as usize),

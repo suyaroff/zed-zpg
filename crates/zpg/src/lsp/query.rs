@@ -241,24 +241,8 @@ impl Server {
         let outcomes = match db::run(client, &stmts, read_only, max_rows, timeout, false) {
             Ok(o) => o,
             Err(e) => {
-                let r = &ranges[e.stmt];
-                // Past the last character means "at end of input": point at the end.
-                let at = match e.position {
-                    Some(p) => text[r.clone()]
-                        .char_indices()
-                        .nth(p.saturating_sub(1))
-                        .map_or(r.end.saturating_sub(1).max(r.start), |(b, _)| r.start + b),
-                    None => r.start,
-                };
-                let word_end = text[at..r.end]
-                    .find(|c: char| c.is_whitespace() || c == ',' || c == ')' || c == '(')
-                    .map_or(r.end, |n| at + n.max(1));
-                let (s, t) = (offset_to_position(&text, at), offset_to_position(&text, word_end.max(at + 1).min(r.end)));
-                let end_col = if t.line == s.line { t.character } else { s.character + 1 };
-                self.failed.insert(
-                    key.to_string(),
-                    Issue::error(s.line, s.character, end_col.max(s.character + 1), e.message.clone()),
-                );
+                let issue = error_issue(&text, ranges[e.stmt].clone(), e.position, e.message.clone());
+                self.failed.insert(key.to_string(), issue);
                 self.publish(conn, key)?;
                 let first = e.message.lines().next().unwrap_or("");
                 return show(conn, MessageType::ERROR, format!("zpg: {first} (rolled back)"));
@@ -344,6 +328,48 @@ impl Server {
         };
         let chosen = result.as_ref().and_then(|r| r.get("title")).and_then(Value::as_str);
         if chosen == Some(RUN) { self.run_sql(conn, &key, target) } else { Ok(()) }
+    }
+
+    /// Underlines what Postgres refuses to parse in the `.sql` buffer `key`.
+    /// Statements after DDL in the same file may name what it creates, so
+    /// "does not exist" errors are dropped there.
+    pub(super) fn check_sql(&mut self, key: &str) {
+        self.checked.remove(key);
+        let Some(doc) = self.docs.get(key).filter(|d| d.kind() == Kind::Sql) else {
+            return;
+        };
+        if !self.settings.check_sql || doc.text.len() > MAX_DANGER_FILE {
+            return;
+        }
+        let text = doc.text.clone();
+        let ranges = sqlsplit::split(&text);
+        if ranges.len() > MAX_CHECKED {
+            return;
+        }
+        let mut issues = vec![];
+        let mut unreachable: Vec<String> = vec![];
+        let mut after_ddl = false;
+        for r in ranges {
+            let stmt = &text[r.clone()];
+            if let [c] = self.conns_for(&text, r.start).as_slice()
+                && !unreachable.contains(c)
+            {
+                match self.db.client(&self.settings, c) {
+                    Ok(client) => {
+                        if let Err((code, e)) = db::check(client, stmt) {
+                            let missing = matches!(code.as_str(), "42P01" | "42703" | "42883" | "42704" | "3F000");
+                            // `$1` without a type is fine when the statement runs from code.
+                            if !(after_ddl && missing) && code != "42P18" {
+                                issues.push(error_issue(&text, r.clone(), e.position, e.message));
+                            }
+                        }
+                    }
+                    Err(_) => unreachable.push(c.clone()),
+                }
+            }
+            after_ddl |= matches!(first_word(stmt).as_str(), "create" | "alter" | "drop" | "comment" | "do");
+        }
+        self.checked.insert(key.to_string(), issues);
     }
 
     /// Warnings for statements that change every row or drop data.
@@ -664,6 +690,8 @@ const MAX_PLAN_LINES: usize = 100_000;
 /// Files scanned for dangerous statements on every change.
 const MAX_DANGER_FILE: usize = 1 << 20;
 const RUN: &str = "Run";
+/// Files with more statements aren't checked: one round trip each.
+const MAX_CHECKED: usize = 300;
 
 /// Arguments of the run command: bytes `start..end` of the buffer, and the
 /// hash of the text they held when the command was made, so that a stale
@@ -692,12 +720,35 @@ impl RunTarget {
     }
 }
 
+fn first_word(stmt: &str) -> String {
+    stmt.split(|c: char| !c.is_alphanumeric()).find(|w| !w.is_empty()).unwrap_or("").to_lowercase()
+}
+
 /// Statements EXPLAIN accepts.
 fn explainable(stmt: &str) -> bool {
-    let first = stmt.split(|c: char| !c.is_alphanumeric()).find(|w| !w.is_empty()).unwrap_or("");
-    ["select", "insert", "update", "delete", "with", "values", "table", "merge", "execute"]
-        .iter()
-        .any(|k| first.eq_ignore_ascii_case(k))
+    matches!(
+        first_word(stmt).as_str(),
+        "select" | "insert" | "update" | "delete" | "with" | "values" | "table" | "merge" | "execute"
+    )
+}
+
+/// An error Postgres reported at 1-based character `position` of the
+/// statement at bytes `r` of `text`, underlining the word there.
+fn error_issue(text: &str, r: std::ops::Range<usize>, position: Option<usize>, message: String) -> Issue {
+    // Past the last character means "at end of input": point at the end.
+    let at = match position {
+        Some(p) => text[r.clone()]
+            .char_indices()
+            .nth(p.saturating_sub(1))
+            .map_or(r.end.saturating_sub(1).max(r.start), |(b, _)| r.start + b),
+        None => r.start,
+    };
+    let word_end = text[at..r.end]
+        .find(|c: char| c.is_whitespace() || c == ',' || c == ')' || c == '(')
+        .map_or(r.end, |n| at + n.max(1));
+    let (s, t) = (offset_to_position(text, at), offset_to_position(text, word_end.max(at + 1).min(r.end)));
+    let end_col = if t.line == s.line { t.character } else { s.character + 1 };
+    Issue::error(s.line, s.character, end_col.max(s.character + 1), message)
 }
 
 fn explain_args(text: &str, key: &str, start: usize, end: usize, conn: &str, analyze: bool) -> Vec<Value> {

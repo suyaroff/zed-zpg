@@ -152,6 +152,8 @@ struct Server {
     schemas: HashMap<String, (Instant, Option<Schema>)>,
     /// Runs waiting for the user's yes, by request id.
     confirms: HashMap<i32, (String, query::RunTarget)>,
+    /// Errors Postgres found in `.sql` buffers on open/save; dropped on edit.
+    checked: HashMap<String, Vec<Issue>>,
 }
 
 pub fn run() -> Res<()> {
@@ -536,10 +538,12 @@ impl Server {
                     text: p.text_document.text,
                     version: p.text_document.version,
                 };
-                let catalog = doc.kind() == Kind::Catalog;
+                let kind = doc.kind();
                 self.docs.insert(key.clone(), doc);
-                if catalog {
-                    self.refresh_catalog(conn, &key)?;
+                match kind {
+                    Kind::Catalog => self.refresh_catalog(conn, &key)?,
+                    Kind::Sql => self.check_sql(&key),
+                    _ => {}
                 }
                 self.publish(conn, &key)?;
             }
@@ -556,6 +560,7 @@ impl Server {
                 doc.version = p.text_document.version;
                 let sql = doc.kind() == Kind::Sql;
                 self.failed.remove(&key);
+                self.checked.remove(&key);
                 self.publish(conn, &key)?;
                 // ▶ lenses carry statement offsets; redraw them for the new text.
                 if sql && self.caps.code_lens_refresh {
@@ -568,6 +573,10 @@ impl Server {
                 match self.docs.get(key).map(Doc::kind) {
                     Some(Kind::Table) => self.save_table(conn, key, false)?,
                     Some(Kind::Row) => self.save_row(conn, key, false)?,
+                    Some(Kind::Sql) => {
+                        self.check_sql(key);
+                        self.publish(conn, key)?;
+                    }
                     _ => {}
                 }
             }
@@ -1818,7 +1827,10 @@ impl Server {
                 }
             },
             (Kind::Result, Some(path)) => issues.extend(self.result_issues(&text, &path)),
-            (Kind::Sql, _) => issues.extend(Server::danger_issues(&text)),
+            (Kind::Sql, _) => {
+                issues.extend(Server::danger_issues(&text));
+                issues.extend(self.checked.get(key).into_iter().flatten().cloned());
+            }
             _ => {}
         }
         if let Some(f) = self.failed.get(key) {

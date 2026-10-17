@@ -58,6 +58,8 @@ pub struct Settings {
     pub max_result_rows: usize,
     /// Per run of `.sql` statements; 0 = no limit.
     pub statement_timeout_ms: u64,
+    /// Have Postgres parse the statements of `.sql` files on open and save, to underline errors.
+    pub check_sql: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -86,6 +88,7 @@ impl Default for Settings {
             apply: ApplySetting::Manual,
             max_result_rows: 1000,
             statement_timeout_ms: 60_000,
+            check_sql: true,
         }
     }
 }
@@ -112,6 +115,8 @@ pub const TEMPLATE: &str = r#"// zpg settings, shared by all projects. Keep this
   // "apply": "manual",
   // "max_result_rows": 1000,
   // "statement_timeout_ms": 60000,
+  // Underline errors in .sql files on open and save (Postgres parses them, nothing runs):
+  // "check_sql": true,
 }
 "#;
 
