@@ -258,6 +258,47 @@ pub fn tables_in(sql: &str) -> Vec<TableRef> {
     out
 }
 
+/// Why a statement deserves a second look before it runs: it changes every
+/// row, or drops data for good. `None` for everything else.
+pub fn danger(stmt: &str) -> Option<String> {
+    let toks = code(stmt);
+    let words: Vec<&str> = toks.iter().filter_map(|t| t.ident().filter(|_| !matches!(t.tok, Tok::Ident { quoted: true, .. }))).collect();
+    let target = || {
+        tables_in(stmt)
+            .first()
+            .map(|r| r.schema.as_ref().map_or(display_ident(&r.name), |s| format!("{}.{}", display_ident(s), display_ident(&r.name))))
+            .unwrap_or_else(|| "the table".into())
+    };
+    // `WHERE` of the statement itself, not of a subquery.
+    let top_level_where = || {
+        let mut depth = 0i32;
+        toks.iter().any(|t| {
+            match t.tok {
+                Tok::Open => depth += 1,
+                Tok::Close => depth -= 1,
+                _ => {}
+            }
+            depth == 0 && t.is_word(&["where"])
+        })
+    };
+    match words.first().copied()? {
+        "update" if !top_level_where() => Some(format!("UPDATE without WHERE changes every row of {}", target())),
+        "delete" if !top_level_where() => Some(format!("DELETE without WHERE deletes every row of {}", target())),
+        "truncate" => Some(format!("TRUNCATE deletes every row of {}", target())),
+        "drop" => {
+            let what = words.get(1).map_or(String::new(), |w| format!(" {}", w.to_uppercase()));
+            Some(format!("DROP{what} can't be undone"))
+        }
+        "alter" => {
+            let k = words.iter().position(|w| *w == "drop")?;
+            let keep = ["constraint", "default", "not", "identity", "expression", "owned", "policy", "trigger"];
+            (!words.get(k + 1).is_some_and(|w| keep.contains(w)))
+                .then(|| "ALTER … DROP COLUMN deletes the column with its data".to_string())
+        }
+        _ => None,
+    }
+}
+
 /// What is being typed at a cursor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cursor {
@@ -573,6 +614,22 @@ mod tests {
         assert_eq!(refs.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), vec!["users", "orders"]);
         let refs = tables_in("select * from users where id = 1");
         assert_eq!(refs[0].alias, None);
+    }
+
+    #[test]
+    fn dangerous_statements() {
+        assert_eq!(danger("update users set a = 1").as_deref(), Some("UPDATE without WHERE changes every row of users"));
+        assert_eq!(danger("update users set a = 1 where id = 2"), None);
+        assert!(danger("update t set a = (select b from c where c.id = t.id)").is_some());
+        assert!(danger("DELETE FROM audit.log").unwrap().ends_with("of audit.log"));
+        assert_eq!(danger("delete from t using u where t.id = u.id"), None);
+        assert!(danger("-- note\ntruncate t").is_some());
+        assert_eq!(danger("drop table t").as_deref(), Some("DROP TABLE can't be undone"));
+        assert!(danger("alter table t drop column c").is_some());
+        assert!(danger("alter table t drop c").is_some());
+        assert_eq!(danger("alter table t drop constraint c"), None);
+        assert_eq!(danger("select * from t"), None);
+        assert_eq!(danger("insert into t values (1)"), None);
     }
 
     #[test]

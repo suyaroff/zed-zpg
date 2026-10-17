@@ -126,6 +126,8 @@ struct ClientCaps {
     show_document: bool,
     tokens_refresh: bool,
     code_lens_refresh: bool,
+    /// `window/showMessageRequest` with buttons.
+    message_actions: bool,
 }
 
 #[derive(Default)]
@@ -148,6 +150,8 @@ struct Server {
     /// Tables and columns per connection for `.sql` files, with when they
     /// were read; `None` when reading failed.
     schemas: HashMap<String, (Instant, Option<Schema>)>,
+    /// Runs waiting for the user's yes, by request id.
+    confirms: HashMap<i32, (String, query::RunTarget)>,
 }
 
 pub fn run() -> Res<()> {
@@ -226,6 +230,7 @@ pub fn run() -> Res<()> {
             document_changes: ws.workspace_edit.and_then(|w| w.document_changes).unwrap_or(false),
             tokens_refresh: ws.semantic_tokens.and_then(|s| s.refresh_support).unwrap_or(false),
             code_lens_refresh: ws.code_lens.and_then(|c| c.refresh_support).unwrap_or(false),
+            message_actions: init.capabilities.window.as_ref().is_some_and(|w| w.show_message.is_some()),
             show_document: init
                 .capabilities
                 .window
@@ -257,7 +262,12 @@ pub fn run() -> Res<()> {
                 conn.sender.send(resp.into())?;
             }
             Message::Notification(n) => server.notification(&conn, n)?,
-            Message::Response(_) => {}
+            Message::Response(r) => {
+                // Our requests have numeric ids.
+                if let Ok(id) = r.id.to_string().parse::<i32>() {
+                    server.answer(&conn, id, r.response_result.ok())?;
+                }
+            }
         }
     }
     drop(conn);
@@ -480,11 +490,12 @@ fn column_md(snap: &Snapshot, i: usize) -> String {
 }
 
 impl Server {
-    fn send_request<R: lsp_types::request::Request>(&mut self, conn: &Connection, params: R::Params) -> Res<()> {
+    /// Returns the request's id, to match the response.
+    fn send_request<R: lsp_types::request::Request>(&mut self, conn: &Connection, params: R::Params) -> Res<i32> {
         self.next_id += 1;
         let req = Request::new(RequestId::from(self.next_id), R::METHOD.into(), params);
         conn.sender.send(req.into())?;
-        Ok(())
+        Ok(self.next_id)
     }
 
     /// Re-reads the settings file when it changed since it was last read.
@@ -720,7 +731,8 @@ impl Server {
                 take_focus: Some(true),
                 selection: None,
             },
-        )
+        )?;
+        Ok(())
     }
 
     fn doc_key(&self, path: &Path) -> Option<String> {
@@ -773,7 +785,8 @@ impl Server {
                 label: Some("zpg: reload".into()),
                 edit,
             },
-        )
+        )?;
+        Ok(())
     }
 
     /// Writes a file that may or may not be open in Zed.
@@ -1805,6 +1818,7 @@ impl Server {
                 }
             },
             (Kind::Result, Some(path)) => issues.extend(self.result_issues(&text, &path)),
+            (Kind::Sql, _) => issues.extend(Server::danger_issues(&text)),
             _ => {}
         }
         if let Some(f) = self.failed.get(key) {

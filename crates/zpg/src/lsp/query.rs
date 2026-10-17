@@ -4,14 +4,17 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use lsp_server::Connection;
+use lsp_types::request::ShowMessageRequest;
 use lsp_types::{
-    CodeActionOrCommand, CodeLens, Command, Hover, HoverContents, MarkupContent, MarkupKind, MessageType, Position,
-    Range,
+    CodeActionOrCommand, CodeLens, Command, Hover, HoverContents, MarkupContent, MarkupKind, MessageActionItem,
+    MessageType, Position, Range, ShowMessageRequestParams,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use zpg_core::header::display_ident;
-use zpg_core::{Apply, Column, Issue, QualName, Query, SnapRow, Snapshot, catalog, history, sqlsplit, table};
+use zpg_core::{
+    Apply, Column, Issue, QualName, Query, Severity, SnapRow, Snapshot, catalog, history, sqlctx, sqlsplit, table,
+};
 
 use super::{
     CMD_EDIT_RESULT, CMD_EXPLAIN, CMD_RERUN, CMD_RUN, Doc, Kind, Res, Server, cell_at, command, encode_name, fnv, show, snapshot,
@@ -191,6 +194,7 @@ impl Server {
             conn: conn_name,
             hash,
             selection,
+            confirmed,
         } = target;
         let conn_name = conn_name.as_str();
         let Some(doc) = self.docs.get(key) else {
@@ -216,6 +220,18 @@ impl Server {
         }
         let stmts: Vec<&str> = ranges.iter().map(|r| &text[r.clone()]).collect();
         let read_only = self.settings.connections.get(conn_name).is_some_and(|c| c.read_only());
+        let dangers: Vec<String> = stmts.iter().filter_map(|s| sqlctx::danger(s)).collect();
+        if !dangers.is_empty() && !confirmed && !read_only && self.caps.message_actions {
+            let again = RunTarget {
+                start,
+                end,
+                conn: conn_name.to_string(),
+                hash: Some(fnv(&text[start..end])),
+                selection,
+                confirmed: true,
+            };
+            return self.confirm(conn, key, again, format!("zpg: {}. Run on {conn_name}?", dangers.join("; ")));
+        }
         let (max_rows, timeout) = (self.settings.max_result_rows, self.settings.statement_timeout_ms);
         let client = match self.db.client(&self.settings, conn_name) {
             Ok(c) => c,
@@ -296,6 +312,61 @@ impl Server {
         self.results.insert(target.clone(), st);
         self.write_file(conn, &target, rendered)?;
         self.show_document(conn, &target)
+    }
+
+    /// Asks before running `target`; the answer comes back as a response (see `answer`).
+    fn confirm(&mut self, conn: &Connection, key: &str, target: RunTarget, message: String) -> Res<()> {
+        let id = self.send_request::<ShowMessageRequest>(
+            conn,
+            ShowMessageRequestParams {
+                typ: MessageType::WARNING,
+                message,
+                actions: Some(vec![
+                    MessageActionItem {
+                        title: RUN.into(),
+                        properties: Default::default(),
+                    },
+                    MessageActionItem {
+                        title: "Cancel".into(),
+                        properties: Default::default(),
+                    },
+                ]),
+            },
+        )?;
+        self.confirms.insert(id, (key.to_string(), target));
+        Ok(())
+    }
+
+    /// The client's answer to a `confirm` question.
+    pub(super) fn answer(&mut self, conn: &Connection, id: i32, result: Option<Value>) -> Res<()> {
+        let Some((key, target)) = self.confirms.remove(&id) else {
+            return Ok(());
+        };
+        let chosen = result.as_ref().and_then(|r| r.get("title")).and_then(Value::as_str);
+        if chosen == Some(RUN) { self.run_sql(conn, &key, target) } else { Ok(()) }
+    }
+
+    /// Warnings for statements that change every row or drop data.
+    pub(super) fn danger_issues(text: &str) -> Vec<Issue> {
+        if text.len() > MAX_DANGER_FILE {
+            return vec![];
+        }
+        sqlsplit::split(text)
+            .into_iter()
+            .filter_map(|r| {
+                let message = sqlctx::danger(&text[r.clone()])?;
+                let s = offset_to_position(text, r.start);
+                let line_end = text[r.start..r.end].find('\n').map_or(r.end, |n| r.start + n);
+                let e = offset_to_position(text, line_end);
+                Some(Issue {
+                    line: s.line,
+                    start: s.character,
+                    end: e.character.max(s.character + 1),
+                    severity: Severity::Warning,
+                    message,
+                })
+            })
+            .collect()
     }
 
     /// Adds statements that ran fine to `.zpg/history.sql`.
@@ -590,16 +661,22 @@ impl Server {
 
 const MAX_LENS_FILE: usize = 5 << 20;
 const MAX_PLAN_LINES: usize = 100_000;
+/// Files scanned for dangerous statements on every change.
+const MAX_DANGER_FILE: usize = 1 << 20;
+const RUN: &str = "Run";
 
 /// Arguments of the run command: bytes `start..end` of the buffer, and the
 /// hash of the text they held when the command was made, so that a stale
 /// command can find its statement again (see `relocate`).
+#[derive(Clone)]
 pub(super) struct RunTarget {
     start: usize,
     end: usize,
     conn: String,
     hash: Option<u64>,
     selection: bool,
+    /// The user already agreed to run a dangerous statement.
+    confirmed: bool,
 }
 
 impl RunTarget {
@@ -610,6 +687,7 @@ impl RunTarget {
             conn: args.get(3)?.as_str()?.to_string(),
             hash: args.get(4).and_then(Value::as_str).and_then(|h| u64::from_str_radix(h, 16).ok()),
             selection: args.get(5).and_then(Value::as_bool).unwrap_or(false),
+            confirmed: false,
         })
     }
 }

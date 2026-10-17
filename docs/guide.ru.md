@@ -384,6 +384,10 @@ update users set active = false where id = 42;
 - Запуск идёт в транзакции с `statement_timeout`. Для подключений с `read_only: true` транзакция только на чтение.
 - `VACUUM`, `CREATE INDEX CONCURRENTLY` и другие команды, которые не работают внутри транзакции, при запуске поодиночке выполняются без неё.
 
+### Опасные запросы
+- `UPDATE` и `DELETE` без `WHERE`, `TRUNCATE`, `DROP …` и `ALTER TABLE … DROP COLUMN` подчёркиваются предупреждением прямо в `.sql`, например «UPDATE without WHERE changes every row of users». `WHERE` во вложенном подзапросе не считается.
+- При запуске такого запроса (▶ или `ctrl-.`) zpg сначала спросит: «… Run on local?» с кнопками **Run** и **Cancel**. Без **Run** ничего не выполняется. На подключениях с `read_only: true` вопроса нет: запись там всё равно не пройдёт.
+
 ### EXPLAIN
 - Над запросом `SELECT`/`INSERT`/`UPDATE`/`DELETE`/`WITH`/`VALUES`/`MERGE` рядом с ▶ есть кнопка **Explain**. Она выполняет `EXPLAIN` и открывает план текстом в `.zpg/<подключение>/results/<файл>.plan.txt`. Сам запрос не выполняется.
 - `ctrl-.` на запросе → **zpg: Explain analyze statement on …** выполняет `EXPLAIN (ANALYZE, BUFFERS)`: запрос **действительно выполняется**, чтобы измерить время, но в транзакции, которая затем откатывается, так что `UPDATE`/`DELETE` ничего не меняют. Учтите, что выполнение может быть долгим и что последовательности (`nextval`) при откате не возвращаются.
