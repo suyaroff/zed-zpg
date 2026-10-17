@@ -8,6 +8,7 @@ description = "PostgreSQL table editor backend for Zed: CLI and language server"
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 zpg-core = { path = "../zpg-core" }
+crossbeam-channel = "0.5"
 clap = { version = "4.6", features = ["derive", "env"] }
 lsp-server = "0.10"
 lsp-types = "0.97"

@@ -133,33 +133,63 @@ fn through_tunnel(cfg: &Config, port: u16) -> Config {
     c
 }
 
+/// TCP connections encrypt unless `sslmode=disable`; unix sockets never do.
+fn uses_tls(cfg: &Config) -> bool {
+    cfg.get_hosts().iter().any(|h| matches!(h, Host::Tcp(_))) && cfg.get_ssl_mode() != SslMode::Disable
+}
+
+fn rustls_connect() -> Result<tokio_postgres_rustls::MakeRustlsConnect, String> {
+    let provider = rustls::crypto::ring::default_provider();
+    let tls = rustls::ClientConfig::builder_with_provider(provider.clone().into())
+        .with_safe_default_protocol_versions()
+        .map_err(|e| e.to_string())?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(tls::NoVerify(provider)))
+        .with_no_client_auth();
+    Ok(tokio_postgres_rustls::MakeRustlsConnect::new(tls))
+}
+
 fn connect(cfg: &Config) -> Result<Client, String> {
-    let local = cfg.get_hosts().iter().all(|h| !matches!(h, Host::Tcp(_)));
-    let res = if local || cfg.get_ssl_mode() == SslMode::Disable {
-        cfg.connect(NoTls)
-    } else {
-        let provider = rustls::crypto::ring::default_provider();
-        let tls = rustls::ClientConfig::builder_with_provider(provider.clone().into())
-            .with_safe_default_protocol_versions()
-            .map_err(|e| e.to_string())?
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(tls::NoVerify(provider)))
-            .with_no_client_auth();
-        cfg.connect(tokio_postgres_rustls::MakeRustlsConnect::new(tls))
-    };
+    let res = if uses_tls(cfg) { cfg.connect(rustls_connect()?) } else { cfg.connect(NoTls) };
     res.map_err(|e| fmt_err(&e))
+}
+
+/// Cancels whatever a client is running, from another thread: Postgres's
+/// cancel request goes over a connection of its own.
+#[derive(Clone)]
+pub struct Canceller {
+    token: postgres::CancelToken,
+    tls: bool,
+}
+
+impl Canceller {
+    pub fn cancel(&self) -> Result<(), String> {
+        let res = if self.tls { self.token.cancel_query(rustls_connect()?) } else { self.token.cancel_query(NoTls) };
+        res.map_err(|e| fmt_err(&e))
+    }
 }
 
 #[derive(Default)]
 pub struct Db {
     clients: HashMap<String, Client>,
     tunnels: HashMap<String, Tunnel>,
+    /// Whether each client's connection uses TLS, which its cancel request needs too.
+    tls: HashMap<String, bool>,
 }
 
 impl Db {
     pub fn clear(&mut self) {
         self.clients.clear();
         self.tunnels.clear();
+        self.tls.clear();
+    }
+
+    /// For the client of `conn` as it is now; connect with `client` first.
+    pub fn canceller(&self, conn: &str) -> Option<Canceller> {
+        Some(Canceller {
+            token: self.clients.get(conn)?.cancel_token(),
+            tls: self.tls.get(conn).copied().unwrap_or(false),
+        })
     }
 
     pub fn client(&mut self, settings: &Settings, conn: &str) -> Result<&mut Client, String> {
@@ -185,6 +215,7 @@ impl Db {
             }
             let c = connect(&cfg)?;
             self.clients.insert(conn.to_string(), c);
+            self.tls.insert(conn.to_string(), uses_tls(&cfg));
         }
         Ok(self.clients.get_mut(conn).unwrap())
     }

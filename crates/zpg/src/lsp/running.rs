@@ -1,0 +1,155 @@
+//! Cancelling a long statement. The server answers one message at a time,
+//! so while a statement runs, a thread of its own reads Zed's messages: it
+//! answers code actions with *Cancel*, and cancels on that command or when
+//! Zed cancels the progress shown in the status bar. Everything else waits
+//! for the statement to end.
+
+use std::sync::{Arc, Mutex};
+use std::thread;
+
+use crossbeam_channel::{Receiver, Sender};
+use lsp_server::{Connection, Message, Notification, Request, Response};
+use lsp_types::notification::{Notification as _, Progress, WorkDoneProgressCancel};
+use lsp_types::request::{CodeActionRequest, ExecuteCommand, Request as _, WorkDoneProgressCreate};
+use lsp_types::{
+    CodeActionOrCommand, Command, NumberOrString, ProgressParams, ProgressParamsValue, WorkDoneProgress,
+    WorkDoneProgressBegin, WorkDoneProgressCancelParams, WorkDoneProgressCreateParams, WorkDoneProgressEnd,
+};
+use postgres::Client;
+
+use super::{Res, Server, notify};
+use crate::db::Canceller;
+
+pub const CMD_CANCEL: &str = "zpg.cancel";
+
+/// The statement being run.
+pub struct Running {
+    pub canceller: Canceller,
+    pub conn: String,
+    /// Of the status-bar progress.
+    pub token: String,
+}
+
+pub type Shared = Arc<Mutex<Option<Running>>>;
+
+/// Reads `from` on a thread of its own and passes on what it doesn't handle itself.
+pub fn forward(from: Receiver<Message>, replies: Sender<Message>, running: Shared) -> Receiver<Message> {
+    let (tx, rx) = crossbeam_channel::unbounded();
+    thread::spawn(move || {
+        for msg in from {
+            match intercept(&msg, &running) {
+                Some(Some(reply)) => {
+                    let _ = replies.send(reply);
+                }
+                Some(None) => {}
+                None => {
+                    if tx.send(msg).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+    rx
+}
+
+fn cancel(running: &Shared) {
+    let canceller = running.lock().ok().and_then(|r| r.as_ref().map(|r| r.canceller.clone()));
+    if let Some(c) = canceller {
+        // Fails only when the server can't be reached; the run then ends on its own.
+        let _ = c.cancel();
+    }
+}
+
+/// `Some(reply)` when handled here (`Some(None)`: nothing to reply), `None` to pass on.
+fn intercept(msg: &Message, running: &Shared) -> Option<Option<Message>> {
+    let conn = running.lock().ok()?.as_ref().map(|r| (r.conn.clone(), r.token.clone()))?;
+    match msg {
+        Message::Request(Request { id, method, .. }) if method == CodeActionRequest::METHOD => {
+            let action = CodeActionOrCommand::Command(Command::new(
+                format!("zpg: Cancel the statement running on {}", conn.0),
+                CMD_CANCEL.into(),
+                None,
+            ));
+            Some(Some(Response::new_ok(id.clone(), vec![action]).into()))
+        }
+        Message::Request(Request { id, method, params })
+            if method == ExecuteCommand::METHOD
+                && params.get("command").and_then(|c| c.as_str()) == Some(CMD_CANCEL) =>
+        {
+            cancel(running);
+            Some(Some(Response::new_ok(id.clone(), ()).into()))
+        }
+        Message::Notification(Notification { method, params }) if method == WorkDoneProgressCancel::METHOD => {
+            let p: WorkDoneProgressCancelParams = serde_json::from_value(params.clone()).ok()?;
+            if p.token == NumberOrString::String(conn.1) {
+                cancel(running);
+                Some(None)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Postgres's message for a statement cancelled on request.
+pub fn cancelled(message: &str) -> bool {
+    message.starts_with("canceling statement due to user request")
+}
+
+impl Server {
+    /// Runs `f` on the client of `conn_name` with `title` in the status bar;
+    /// until it returns, ctrl-. offers to cancel it. The inner error is the
+    /// connection's.
+    pub(super) fn cancellable<T>(
+        &mut self,
+        conn: &Connection,
+        conn_name: &str,
+        title: &str,
+        f: impl FnOnce(&mut Client) -> T,
+    ) -> Res<Result<T, String>> {
+        if let Err(e) = self.db.client(&self.settings, conn_name) {
+            return Ok(Err(e));
+        }
+        let name = format!("zpg-run-{}", self.next_id + 1);
+        let token = NumberOrString::String(name.clone());
+        if self.caps.progress {
+            self.send_request::<WorkDoneProgressCreate>(conn, WorkDoneProgressCreateParams { token: token.clone() })?;
+            let begin = WorkDoneProgressBegin {
+                title: format!("zpg: {title}"),
+                cancellable: Some(true),
+                message: Some("ctrl-. to cancel".into()),
+                percentage: None,
+            };
+            notify::<Progress>(
+                conn,
+                ProgressParams {
+                    token: token.clone(),
+                    value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(begin)),
+                },
+            )?;
+        }
+        if let (Some(canceller), Ok(mut r)) = (self.db.canceller(conn_name), self.running.lock()) {
+            *r = Some(Running {
+                canceller,
+                conn: conn_name.to_string(),
+                token: name,
+            });
+        }
+        let out = self.db.client(&self.settings, conn_name).map(f);
+        if let Ok(mut r) = self.running.lock() {
+            *r = None;
+        }
+        if self.caps.progress {
+            notify::<Progress>(
+                conn,
+                ProgressParams {
+                    token,
+                    value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(WorkDoneProgressEnd { message: None })),
+                },
+            )?;
+        }
+        Ok(out)
+    }
+}

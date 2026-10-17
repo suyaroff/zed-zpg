@@ -16,6 +16,7 @@ use zpg_core::{
     Apply, Column, Issue, QualName, Query, Severity, SnapRow, Snapshot, catalog, history, sqlctx, sqlsplit, table,
 };
 
+use super::running;
 use super::{
     CMD_EDIT_RESULT, CMD_EXPLAIN, CMD_RERUN, CMD_RUN, Doc, Kind, Res, Server, cell_at, command, encode_name, fnv, show, snapshot,
 };
@@ -233,14 +234,17 @@ impl Server {
             return self.confirm(conn, key, again, format!("zpg: {}. Run on {conn_name}?", dangers.join("; ")));
         }
         let (max_rows, timeout) = (self.settings.max_result_rows, self.settings.statement_timeout_ms);
-        let client = match self.db.client(&self.settings, conn_name) {
-            Ok(c) => c,
-            Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),
-        };
         let started = Instant::now();
-        let outcomes = match db::run(client, &stmts, read_only, max_rows, timeout, false) {
-            Ok(o) => o,
-            Err(e) => {
+        let ran = self.cancellable(conn, conn_name, &format!("Running on {conn_name}"), |c| {
+            db::run(c, &stmts, read_only, max_rows, timeout, false)
+        })?;
+        let outcomes = match ran {
+            Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),
+            Ok(Ok(o)) => o,
+            Ok(Err(e)) if running::cancelled(&e.message) => {
+                return show(conn, MessageType::INFO, "zpg: cancelled (rolled back)".into());
+            }
+            Ok(Err(e)) => {
                 let issue = error_issue(&text, ranges[e.stmt].clone(), e.position, e.message.clone());
                 self.failed.insert(key.to_string(), issue);
                 self.publish(conn, key)?;
@@ -431,14 +435,17 @@ impl Server {
         let conn_name = target.conn.as_str();
         let read_only = self.settings.connections.get(conn_name).is_some_and(|c| c.read_only());
         let timeout = self.settings.statement_timeout_ms;
-        let client = match self.db.client(&self.settings, conn_name) {
-            Ok(c) => c,
-            Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),
-        };
         let started = Instant::now();
-        let plan = match db::run(client, &[&sql], read_only, MAX_PLAN_LINES, timeout, analyze) {
-            Ok(mut o) => o.remove(0).rows,
-            Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {} (rolled back)", e.message)),
+        let ran = self.cancellable(conn, conn_name, &format!("Explaining on {conn_name}"), |c| {
+            db::run(c, &[&sql], read_only, MAX_PLAN_LINES, timeout, analyze)
+        })?;
+        let plan = match ran {
+            Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),
+            Ok(Ok(mut o)) => o.remove(0).rows,
+            Ok(Err(e)) if running::cancelled(&e.message) => {
+                return show(conn, MessageType::INFO, "zpg: cancelled (rolled back)".into());
+            }
+            Ok(Err(e)) => return show(conn, MessageType::ERROR, format!("zpg: {} (rolled back)", e.message)),
         };
         let millis = started.elapsed().as_millis();
         let first = stmt.lines().next().unwrap_or("");
@@ -478,22 +485,19 @@ impl Server {
         let Some(st) = self.result_state(&path).cloned() else {
             return show(conn, MessageType::ERROR, "zpg: no saved state for this result".into());
         };
-        let client = match self.db.client(&self.settings, &st.conn) {
-            Ok(c) => c,
-            Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),
-        };
         let read_only = self.settings.connections.get(&st.conn).is_some_and(|c| c.read_only());
+        let (max_rows, timeout) = (self.settings.max_result_rows, self.settings.statement_timeout_ms);
         let started = Instant::now();
-        let out = match db::run(
-            client,
-            &[&st.sql],
-            read_only,
-            self.settings.max_result_rows,
-            self.settings.statement_timeout_ms,
-            false,
-        ) {
-            Ok(mut o) => o.remove(0),
-            Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {} (rolled back)", e.message)),
+        let ran = self.cancellable(conn, &st.conn, &format!("Running on {}", st.conn), |c| {
+            db::run(c, &[&st.sql], read_only, max_rows, timeout, false)
+        })?;
+        let out = match ran {
+            Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),
+            Ok(Ok(mut o)) => o.remove(0),
+            Ok(Err(e)) if running::cancelled(&e.message) => {
+                return show(conn, MessageType::INFO, "zpg: cancelled (rolled back)".into());
+            }
+            Ok(Err(e)) => return show(conn, MessageType::ERROR, format!("zpg: {} (rolled back)", e.message)),
         };
         let millis = started.elapsed().as_millis();
         self.record_history(conn, &path, &st.conn, &[&st.sql], &format!("{} · {millis} ms", out.tag))?;

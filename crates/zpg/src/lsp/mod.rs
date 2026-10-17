@@ -2,6 +2,7 @@ mod complete;
 mod edits;
 mod export;
 mod query;
+mod running;
 mod sqlinfo;
 mod values;
 
@@ -131,6 +132,8 @@ struct ClientCaps {
     code_lens_refresh: bool,
     /// `window/showMessageRequest` with buttons.
     message_actions: bool,
+    /// Status-bar progress (`window/workDoneProgress/create`).
+    progress: bool,
 }
 
 #[derive(Default)]
@@ -157,6 +160,8 @@ struct Server {
     confirms: HashMap<i32, (String, query::RunTarget)>,
     /// Errors Postgres found in `.sql` buffers on open/save; dropped on edit.
     checked: HashMap<String, Vec<Issue>>,
+    /// The statement running now, for the thread that reads messages meanwhile.
+    running: running::Shared,
 }
 
 pub fn run() -> Res<()> {
@@ -211,6 +216,7 @@ pub fn run() -> Res<()> {
                 CMD_EXPLAIN,
                 CMD_EXPORT,
                 CMD_FILTER,
+                running::CMD_CANCEL,
             ]
                 .map(String::from)
                 .to_vec(),
@@ -237,6 +243,7 @@ pub fn run() -> Res<()> {
             tokens_refresh: ws.semantic_tokens.and_then(|s| s.refresh_support).unwrap_or(false),
             code_lens_refresh: ws.code_lens.and_then(|c| c.refresh_support).unwrap_or(false),
             message_actions: init.capabilities.window.as_ref().is_some_and(|w| w.show_message.is_some()),
+            progress: init.capabilities.window.as_ref().and_then(|w| w.work_done_progress).unwrap_or(false),
             show_document: init
                 .capabilities
                 .window
@@ -254,10 +261,13 @@ pub fn run() -> Res<()> {
         Err(e) => show(&conn, MessageType::ERROR, format!("zpg: {e}"))?,
     }
 
-    for msg in &conn.receiver {
+    let messages = running::forward(conn.receiver.clone(), conn.sender.clone(), server.running.clone());
+    for msg in &messages {
         match msg {
             Message::Request(req) => {
-                if conn.handle_shutdown(&req)? {
+                // `exit` follows, and the reader thread stops on it.
+                if req.method == lsp_types::request::Shutdown::METHOD {
+                    conn.sender.send(Response::new_ok(req.id, ()).into())?;
                     break;
                 }
                 let id = req.id.clone();

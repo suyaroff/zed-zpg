@@ -7,7 +7,7 @@ use lsp_types::{CodeActionOrCommand, MessageType};
 use serde_json::Value;
 use zpg_core::export;
 
-use super::{CMD_EXPORT, Kind, Res, Server, command, encode_name, show, snapshot};
+use super::{CMD_EXPORT, Kind, Res, Server, command, encode_name, running, show, snapshot};
 use crate::db;
 use crate::state;
 
@@ -70,12 +70,15 @@ impl Server {
         let (what, bytes) = match format {
             "csv-all" => {
                 let timeout = self.settings.statement_timeout_ms;
-                let written = File::create(&target).map_err(|e| e.to_string()).and_then(|mut f| {
-                    let client = self.db.client(&self.settings, &snap.conn)?;
-                    db::copy_csv(client, &snap, &snap.query, timeout, &mut f)
-                });
+                let mut file = File::create(&target)?;
+                let written = self
+                    .cancellable(conn, &snap.conn, &format!("Exporting {}", snap.table), |c| {
+                        db::copy_csv(c, &snap, &snap.query, timeout, &mut file)
+                    })?
+                    .and_then(|r| r);
                 match written {
                     Ok(n) => ("all matching rows".to_string(), n),
+                    Err(e) if running::cancelled(&e) => return show(conn, MessageType::INFO, "zpg: export cancelled".into()),
                     Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),
                 }
             }
