@@ -596,6 +596,20 @@ pub fn load(c: &mut Client, conn: &str, table: &QualName, d: &Defaults) -> Resul
     Ok(snap)
 }
 
+/// Writes every row of the page's query as CSV to `out`; returns the bytes written.
+pub fn copy_csv(c: &mut Client, snap: &Snapshot, q: &Query, timeout_ms: u64, out: &mut impl std::io::Write) -> Result<u64, String> {
+    let mut tx = c.build_transaction().read_only(true).start().map_err(|e| fmt_err(&e))?;
+    if timeout_ms > 0 {
+        tx.batch_execute(&format!("SET LOCAL statement_timeout = {timeout_ms}"))
+            .map_err(|e| fmt_err(&e))?;
+    }
+    let mut reader = tx.copy_out(&sql::copy_csv(snap, q)).map_err(|e| fmt_err(&e))?;
+    let n = std::io::copy(&mut reader, out).map_err(|e| e.to_string())?;
+    drop(reader);
+    tx.commit().map_err(|e| fmt_err(&e))?;
+    Ok(n)
+}
+
 /// Counting longer than this falls back to the planner's estimate.
 const COUNT_TIMEOUT_MS: u32 = 1000;
 
@@ -799,10 +813,16 @@ pub fn run(
     read_only: bool,
     max_rows: usize,
     timeout_ms: u64,
+    rollback: bool,
 ) -> Result<Vec<Outcome>, RunError> {
-    match run_in_tx(c, stmts, read_only, max_rows, timeout_ms) {
+    match run_in_tx(c, stmts, read_only, max_rows, timeout_ms, rollback) {
         // VACUUM, CREATE INDEX CONCURRENTLY and the like refuse transactions.
-        Err(e) if stmts.len() == 1 && !read_only && e.message.contains("cannot run inside a transaction block") => {
+        Err(e)
+            if stmts.len() == 1
+                && !read_only
+                && !rollback
+                && e.message.contains("cannot run inside a transaction block") =>
+        {
             let msgs = c.simple_query(stmts[0]).map_err(|e| run_err(0, &e))?;
             let (_, n) = simple_rows(msgs);
             Ok(vec![Outcome {
@@ -822,6 +842,7 @@ fn run_in_tx(
     read_only: bool,
     max_rows: usize,
     timeout_ms: u64,
+    rollback: bool,
 ) -> Result<Vec<Outcome>, RunError> {
     let mut tx = c.build_transaction().read_only(read_only).start().map_err(|e| run_err(0, &e))?;
     if timeout_ms > 0 {
@@ -877,7 +898,12 @@ fn run_in_tx(
             more,
         });
     }
-    tx.commit().map_err(|e| run_err(stmts.len().saturating_sub(1), &e))?;
+    let last = stmts.len().saturating_sub(1);
+    if rollback {
+        tx.rollback().map_err(|e| run_err(last, &e))?;
+    } else {
+        tx.commit().map_err(|e| run_err(last, &e))?;
+    }
     Ok(out)
 }
 

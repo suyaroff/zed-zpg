@@ -11,10 +11,10 @@ use lsp_types::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use zpg_core::header::display_ident;
-use zpg_core::{Apply, Column, Issue, QualName, Query, SnapRow, Snapshot, catalog, sqlsplit, table};
+use zpg_core::{Apply, Column, Issue, QualName, Query, SnapRow, Snapshot, catalog, history, sqlsplit, table};
 
 use super::{
-    CMD_EDIT_RESULT, CMD_RERUN, CMD_RUN, Doc, Kind, Res, Server, cell_at, command, encode_name, fnv, show, snapshot,
+    CMD_EDIT_RESULT, CMD_EXPLAIN, CMD_RERUN, CMD_RUN, Doc, Kind, Res, Server, cell_at, command, encode_name, fnv, show, snapshot,
 };
 use crate::db::{self, EditSource, ResultCol};
 use crate::state;
@@ -126,6 +126,19 @@ impl Server {
                     data: None,
                 });
             }
+            if let [c] = conns.as_slice()
+                && explainable(&doc.text[r.clone()])
+            {
+                out.push(CodeLens {
+                    range: Range::new(pos, pos),
+                    command: Some(Command::new(
+                        "Explain".into(),
+                        CMD_EXPLAIN.into(),
+                        Some(explain_args(&doc.text, key, r.start, r.end, c, false)),
+                    )),
+                    data: None,
+                });
+            }
         }
         out
     }
@@ -153,6 +166,18 @@ impl Server {
                     CMD_RUN,
                     run_args(text, key, r.start, r.end, &c),
                 ));
+                if explainable(&text[r.clone()]) {
+                    out.push(command(
+                        format!("zpg: Explain statement on {c}"),
+                        CMD_EXPLAIN,
+                        explain_args(text, key, r.start, r.end, &c, false),
+                    ));
+                    out.push(command(
+                        format!("zpg: Explain analyze statement on {c} (runs it, then rolls back)"),
+                        CMD_EXPLAIN,
+                        explain_args(text, key, r.start, r.end, &c, true),
+                    ));
+                }
             }
         }
         out
@@ -197,7 +222,7 @@ impl Server {
             Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),
         };
         let started = Instant::now();
-        let outcomes = match db::run(client, &stmts, read_only, max_rows, timeout) {
+        let outcomes = match db::run(client, &stmts, read_only, max_rows, timeout, false) {
             Ok(o) => o,
             Err(e) => {
                 let r = &ranges[e.stmt];
@@ -228,6 +253,7 @@ impl Server {
         self.publish(conn, key)?;
         let tags: Vec<&str> = outcomes.iter().map(|o| o.tag.as_str()).collect();
         show(conn, MessageType::INFO, format!("zpg: {} ({millis} ms)", tags.join("; ")))?;
+        self.record_history(conn, &path, conn_name, &stmts, &format!("{} · {millis} ms", tags.join("; ")))?;
         if tags.iter().any(|t| t.starts_with("CREATE") || t.starts_with("DROP") || t.starts_with("ALTER")) {
             self.schemas.clear();
             let catalogs: Vec<String> = self
@@ -272,7 +298,75 @@ impl Server {
         self.show_document(conn, &target)
     }
 
-    fn result_state(&mut self, path: &Path) -> Option<&ResultState> {
+    /// Adds statements that ran fine to `.zpg/history.sql`.
+    fn record_history(&mut self, conn: &Connection, from: &Path, conn_name: &str, stmts: &[&str], summary: &str) -> Res<()> {
+        let root = self.zpg_root(from);
+        state::ensure_root(&root)?;
+        let target = root.join("history.sql");
+        let old = match self.doc_key(&target) {
+            Some(k) => self.docs[&k].text.clone(),
+            None => std::fs::read_to_string(&target).unwrap_or_default(),
+        };
+        let time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let text = history::append(&old, &history::entry(&time, conn_name, summary, stmts), history::MAX_LEN);
+        self.write_file(conn, &target, text)
+    }
+
+    /// Runs `EXPLAIN` (with `analyze`: `EXPLAIN (ANALYZE, BUFFERS)` in a
+    /// transaction that is rolled back) and opens the plan as text.
+    pub(super) fn explain(&mut self, conn: &Connection, key: &str, target: RunTarget, analyze: bool) -> Res<()> {
+        let Some(doc) = self.docs.get(key) else {
+            return Ok(());
+        };
+        let text = doc.text.clone();
+        let Some(path) = doc.path() else {
+            return Ok(());
+        };
+        let Some((start, end)) = relocate(&text, target.start, target.end, target.hash, target.selection) else {
+            return show(
+                conn,
+                MessageType::WARNING,
+                "zpg: the file changed since this was drawn; nothing was run, try again".into(),
+            );
+        };
+        let stmt = text[start..end].trim();
+        let sql = if analyze { format!("EXPLAIN (ANALYZE, BUFFERS) {stmt}") } else { format!("EXPLAIN {stmt}") };
+        let conn_name = target.conn.as_str();
+        let read_only = self.settings.connections.get(conn_name).is_some_and(|c| c.read_only());
+        let timeout = self.settings.statement_timeout_ms;
+        let client = match self.db.client(&self.settings, conn_name) {
+            Ok(c) => c,
+            Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),
+        };
+        let started = Instant::now();
+        let plan = match db::run(client, &[&sql], read_only, MAX_PLAN_LINES, timeout, analyze) {
+            Ok(mut o) => o.remove(0).rows,
+            Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {} (rolled back)", e.message)),
+        };
+        let millis = started.elapsed().as_millis();
+        let first = stmt.lines().next().unwrap_or("");
+        let mut out = format!(
+            "-- EXPLAIN{} on {conn_name} · {millis} ms{}\n-- {}\n\n",
+            if analyze { " ANALYZE" } else { "" },
+            if analyze { " · rolled back" } else { "" },
+            first.chars().take(200).collect::<String>(),
+        );
+        for row in plan {
+            out += row.first().and_then(|v| v.as_deref()).unwrap_or("");
+            out.push('\n');
+        }
+        let root = self.zpg_root(&path);
+        state::ensure_root(&root)?;
+        let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "query".into());
+        let target = root
+            .join(encode_name(conn_name))
+            .join("results")
+            .join(format!("{}.plan.txt", encode_name(&stem)));
+        self.write_file(conn, &target, out)?;
+        self.show_document(conn, &target)
+    }
+
+    pub(super) fn result_state(&mut self, path: &Path) -> Option<&ResultState> {
         if !self.results.contains_key(path) {
             let st: ResultState = state::load(path)?;
             self.results.insert(path.to_path_buf(), st);
@@ -299,15 +393,18 @@ impl Server {
             read_only,
             self.settings.max_result_rows,
             self.settings.statement_timeout_ms,
+            false,
         ) {
             Ok(mut o) => o.remove(0),
             Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {} (rolled back)", e.message)),
         };
+        let millis = started.elapsed().as_millis();
+        self.record_history(conn, &path, &st.conn, &[&st.sql], &format!("{} · {millis} ms", out.tag))?;
         let new = ResultState {
             snap: result_snapshot(&st.conn, &out.columns, &out.rows, self.settings.max_cell_width),
             columns: out.columns,
             more: out.more,
-            millis: started.elapsed().as_millis(),
+            millis,
             ..st
         };
         let rendered = render_result(&new);
@@ -492,6 +589,7 @@ impl Server {
 }
 
 const MAX_LENS_FILE: usize = 5 << 20;
+const MAX_PLAN_LINES: usize = 100_000;
 
 /// Arguments of the run command: bytes `start..end` of the buffer, and the
 /// hash of the text they held when the command was made, so that a stale
@@ -514,6 +612,20 @@ impl RunTarget {
             selection: args.get(5).and_then(Value::as_bool).unwrap_or(false),
         })
     }
+}
+
+/// Statements EXPLAIN accepts.
+fn explainable(stmt: &str) -> bool {
+    let first = stmt.split(|c: char| !c.is_alphanumeric()).find(|w| !w.is_empty()).unwrap_or("");
+    ["select", "insert", "update", "delete", "with", "values", "table", "merge", "execute"]
+        .iter()
+        .any(|k| first.eq_ignore_ascii_case(k))
+}
+
+fn explain_args(text: &str, key: &str, start: usize, end: usize, conn: &str, analyze: bool) -> Vec<Value> {
+    let mut args = run_args(text, key, start, end, conn);
+    args.extend([Value::Bool(false), Value::Bool(analyze)]);
+    args
 }
 
 fn run_args(text: &str, key: &str, start: usize, end: usize, conn: &str) -> Vec<Value> {

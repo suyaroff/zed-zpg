@@ -66,17 +66,36 @@ fn filter_clause(q: &Query) -> String {
     }
 }
 
+/// ` ORDER BY` the header's `order`, else the key.
+fn order_clause(snap: &Snapshot, q: &Query) -> String {
+    if !q.order.trim().is_empty() {
+        format!(" ORDER BY {}", q.order)
+    } else if !snap.pk.is_empty() {
+        let keys: Vec<String> = snap.pk.iter().map(|&i| quote_ident(&snap.columns[i].name)).collect();
+        format!(" ORDER BY {}", keys.join(", "))
+    } else {
+        String::new()
+    }
+}
+
 pub fn select_page(snap: &Snapshot, has_xmin: bool, q: &Query) -> Stmt {
     let mut sql = format!("SELECT {} FROM {}", returning(&snap.columns, has_xmin), snap.table.sql());
     sql += &filter_clause(q);
-    if !q.order.trim().is_empty() {
-        sql += &format!(" ORDER BY {}", q.order);
-    } else if !snap.pk.is_empty() {
-        let keys: Vec<String> = snap.pk.iter().map(|&i| quote_ident(&snap.columns[i].name)).collect();
-        sql += &format!(" ORDER BY {}", keys.join(", "));
-    }
+    sql += &order_clause(snap, q);
     sql += &format!(" LIMIT {} OFFSET {}", q.limit, q.offset());
     Stmt { sql, params: vec![] }
+}
+
+/// Every row `q.filter` matches, in page order, as CSV with a header; only the shown columns.
+pub fn copy_csv(snap: &Snapshot, q: &Query) -> String {
+    let cols: Vec<String> = snap.shown().iter().map(|&i| quote_ident(&snap.columns[i].name)).collect();
+    format!(
+        "COPY (SELECT {} FROM {}{}{}) TO STDOUT WITH (FORMAT csv, HEADER)",
+        cols.join(", "),
+        snap.table.sql(),
+        filter_clause(q),
+        order_clause(snap, q)
+    )
 }
 
 /// Counts the rows `q.filter` matches.

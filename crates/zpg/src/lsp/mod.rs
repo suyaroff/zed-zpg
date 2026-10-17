@@ -1,5 +1,6 @@
 mod complete;
 mod edits;
+mod export;
 mod query;
 mod sqlinfo;
 mod values;
@@ -58,6 +59,8 @@ const CMD_SORT: &str = "zpg.sort";
 const CMD_CONFIG: &str = "zpg.openConfig";
 const CMD_DDL: &str = "zpg.ddl";
 const CMD_BACKREF: &str = "zpg.referencing";
+const CMD_EXPLAIN: &str = "zpg.explain";
+const CMD_EXPORT: &str = "zpg.export";
 
 /// How `refresh` changes the page it reloads.
 enum Reload {
@@ -196,6 +199,8 @@ pub fn run() -> Res<()> {
                 CMD_CONFIG,
                 CMD_DDL,
                 CMD_BACKREF,
+                CMD_EXPLAIN,
+                CMD_EXPORT,
             ]
                 .map(String::from)
                 .to_vec(),
@@ -661,7 +666,18 @@ impl Server {
                             self.run_sql(conn, &key, target)?;
                         }
                     }
+                    CMD_EXPLAIN => {
+                        if let Some(target) = query::RunTarget::from_args(&p.arguments) {
+                            let analyze = p.arguments.get(6).and_then(Value::as_bool).unwrap_or(false);
+                            self.explain(conn, &key, target, analyze)?;
+                        }
+                    }
                     CMD_RERUN => self.rerun(conn, &key)?,
+                    CMD_EXPORT => {
+                        if let Some(format) = p.arguments.get(1).and_then(Value::as_str) {
+                            self.export(conn, &key, format)?;
+                        }
+                    }
                     CMD_EDIT_RESULT => self.edit_result(conn, &key)?,
                     CMD_DROP => {
                         if let Some(line) = num(1) {
@@ -1537,7 +1553,13 @@ impl Server {
                 let doc = &self.docs[key];
                 return self.sql_actions(doc, key, range);
             }
-            Kind::Result => return self.result_actions(key, &path),
+            Kind::Result => {
+                let mut out = self.result_actions(key, &path);
+                if self.caps.show_document {
+                    out.extend(export::actions(key, Kind::Result));
+                }
+                return out;
+            }
             Kind::Other => return out,
             Kind::Table => {}
         }
@@ -1609,6 +1631,7 @@ impl Server {
         }
         if self.caps.show_document {
             out.push(command("zpg: Show DDL".into(), CMD_DDL, vec![arg()]));
+            out.extend(export::actions(key, Kind::Table));
         }
         out.push(command(
             if pending {

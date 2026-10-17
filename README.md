@@ -74,6 +74,8 @@ zpg also attaches to `.sql` files (install Zed's SQL extension and keep `"code_l
 - Rows open in a read-only `.pgres` tab (at most `max_result_rows`, read through a cursor); other statements report their tag, e.g. `UPDATE 3`. Errors roll back and are underlined at the position Postgres reports.
 - If a result comes from one table and includes its key, *Edit rows in table* opens that table's page filtered with `where="id IN (SELECT id FROM (<query>) AS zpg_q)"`.
 - Settings: `max_result_rows` (1000), `statement_timeout_ms` (60000).
+- *Explain* (a lens next to ▶, and a code action) runs `EXPLAIN` and opens the plan as text in `.zpg/<conn>/results/<file>.plan.txt`; the code action *Explain analyze* runs `EXPLAIN (ANALYZE, BUFFERS)`, which executes the statement, in a transaction that is rolled back.
+- Every statement that ran fine is appended to `.zpg/history.sql` with its time, outcome and `-- @conn`, so ▶ runs it again; the file keeps under 1 MB by dropping the oldest entries.
 - Table and column names of the statement's connection: completion (tables and schemas after `from`/`join`/`update`/`into`, columns after `alias.` or `table.`, tables after `schema.`), hover (a table's columns and types, a column's type), and `F12` on a table opens its page. Names are read on first use and kept for 5 minutes; DDL run from `.sql` and *Refresh catalog* reload them.
 
 ## Header
@@ -93,7 +95,7 @@ Edit the first line and save to reload with new settings:
 
 ## Code actions (`ctrl-.`)
 
-*Apply changes*, *Preview SQL*, *Sort by <column> ↑/↓* (on the column row), *Open row*, *Insert row* (a template with `+`/DEFAULT/NULL filled in), *Next/Previous/First/Last page* (titled with the page out of the total, e.g. *Next page (2/37)*), *Rows of … referencing this*, *Refresh*, *Apply changes manually / on save*, *Show DDL*. In a row view: *Apply changes*, *Refresh row*. In the catalog: *Open table*, *Show DDL* (opens `<schema>.<table>.ddl.sql`: `CREATE TABLE` with constraints, then indexes, triggers and comments, rebuilt from the system catalogs — no owners, grants or storage options), *Drop table…* (opens a `.sql` with the `DROP` to review and run with ▶; the catalog refreshes after DDL run from `.sql`), *Refresh catalog*, *Open settings file*.
+*Apply changes*, *Preview SQL*, *Sort by <column> ↑/↓* (on the column row), *Open row*, *Insert row* (a template with `+`/DEFAULT/NULL filled in), *Next/Previous/First/Last page* (titled with the page out of the total, e.g. *Next page (2/37)*), *Rows of … referencing this*, *Refresh*, *Apply changes manually / on save*, *Show DDL*, *Export page as CSV / JSON / INSERT statements* and *Export all rows matching where= as CSV* (via `COPY`; into `.zpg/<conn>/exports/`; a page exports the loaded rows of the shown columns, not unsaved edits). In a result: *Edit rows in table*, *Run again*, *Export result as CSV / JSON*. In a row view: *Apply changes*, *Refresh row*. In the catalog: *Open table*, *Show DDL* (opens `<schema>.<table>.ddl.sql`: `CREATE TABLE` with constraints, then indexes, triggers and comments, rebuilt from the system catalogs — no owners, grants or storage options), *Drop table…* (opens a `.sql` with the `DROP` to review and run with ▶; the catalog refreshes after DDL run from `.sql`), *Refresh catalog*, *Open settings file*.
 
 Pending changes are shown as a diagnostic on the header line. Changed cells and new rows are underlined via semantic tokens, which Zed only shows when enabled:
 

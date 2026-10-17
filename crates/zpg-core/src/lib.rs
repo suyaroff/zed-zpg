@@ -1,7 +1,9 @@
 pub mod catalog;
 pub mod cell;
 pub mod diff;
+pub mod export;
 pub mod header;
+pub mod history;
 pub mod record;
 pub mod snapshot;
 pub mod sqlctx;
