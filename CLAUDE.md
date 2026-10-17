@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-zpg is a Zed extension that shows PostgreSQL tables as text buffers and writes edits back to the database. User-facing behavior (header fields, editing rules, code actions, settings) is documented in `README.md`; `docs/guide.ru.md` is the Russian guide — keep both in sync with behavior changes.
+zpg is a Zed extension that shows PostgreSQL tables as text buffers and writes edits back to the database. User-facing behavior is documented in the Russian guide `docs/ru/` (one page per area: `02-connections` settings, `05-table` header and paging, `06-editing`, `07-relations`, `08-sql`, `09-admin`, `10-export`, `11-reference` lists every code action, setting, file and error); `README.md` is a short English overview linking to it. Examples there use the demo schema `docs/examples/demo.sql`. Update the guide (and `11-reference.md`) with every behavior change.
 
 ## Commands
 

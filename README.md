@@ -1,125 +1,71 @@
 # zpg — PostgreSQL tables in Zed
 
-Подробное руководство на русском: [docs/guide.ru.md](docs/guide.ru.md).
-
-Zed extensions cannot add custom panels, so zpg shows a table as a text buffer and writes your edits back to the database:
-
-1. `zpg open` creates `.zpg/catalog.pgdb` in the project and opens it: every configured connection with its tables.
-2. Go to definition (`F12`) on a table opens a page of it as `.zpg/<conn>/<schema>.<table>.pgt`.
-3. Edit cells like any text, save, then run the code action *Apply changes*: the language server compares the buffer with what it loaded and runs the UPDATE/INSERT/DELETE statements in one transaction, then re-renders the page. With `apply=save` saving alone writes.
+Zed extensions cannot add custom panels, so zpg shows a PostgreSQL table as a text buffer and writes your edits back to the database. Edit cells like any text, save, run *Apply changes*, and zpg turns the difference into `UPDATE`/`INSERT`/`DELETE` in one transaction.
 
 ```
-# zpg v1 conn=local table=public.users pk=id page=1 limit=100 width=40 apply=manual
-| id | email     | name | active  | note                 |
-|----|-----------|------|---------|----------------------|
-| 1  | anna@x.io | Anna | true    | short                |
-| 2  | bob@x.io  | Bob  | NULL    | long text long text… |
-| +  | new@x.io  | New  | DEFAULT | NULL                 |
+# zpg v1 conn=local table=zpg_demo.orders pk=id page=1 limit=100 total=9 width=40 apply=manual
+| id | customer_id | status    | created_at                    | total   | comment             |
+|----|-------------|-----------|-------------------------------|---------|---------------------|
+| 1  | 1           | paid      | 2026-09-28 01:40:44.321115+05 | 64.90   | NULL                |
+| 2  | 1           | shipped   | 2026-10-06 01:40:44.321115+05 | 289.00  | Подарочная упаковка |
+| +  | 3           | new       | DEFAULT                       | DEFAULT | NULL                |
 ```
 
-## Connections
-
-All zpg settings live in one user file, `~/.config/zpg/config.json`, shared by all projects and kept out of them (and out of git). zpg creates it with commented examples on first start; open it with the catalog code action *Open settings file* or `zpg config`. Zed's `lsp.zpg.settings` is not read.
-
-```jsonc
-{
-  "connections": {
-    "local": "postgresql:///mydb?host=/var/run/postgresql",
-    "prod": { "url": "postgresql://app:secret@db.example.com/app", "read_only": true },
-  },
-  "page_size": 100,
-  "max_cell_width": 40,
-  "apply": "manual",
-}
-```
-
-- Comments and trailing commas are allowed, as in Zed's settings. Saved changes apply on the next zpg request; an invalid file is reported and the previous settings stay.
-- The file is created with mode `600`. `ZPG_CONFIG` overrides the path; otherwise `XDG_CONFIG_HOME` is honored, and on Windows it is `%APPDATA%\zpg\config.json`.
-- `${VAR}` in a url is taken from the environment Zed sees for the project, if you'd rather keep a password in a variable.
-- `read_only: true` opens every table of the connection read-only, and its transactions are read-only too.
-- TLS: `sslmode=prefer` (default) and `require` encrypt without checking the certificate, like libpq; unix sockets and `sslmode=disable` don't use TLS.
-- SSH: `{ "url": "postgresql:///app?host=/var/run/postgresql", "ssh": "deploy@prod", "ssh_options": ["-p", "2222"] }` tunnels through the system `ssh` (so `~/.ssh/config`, keys, agent and `ProxyJump` apply); the url names the database as the server sees it, a remote unix socket included. Key or agent auth only, and the host must already be in `known_hosts`. A dead tunnel is reopened on the next request.
-
-## Editing rules
-
-| You write | Meaning |
-|---|---|
-| `NULL` | SQL NULL (the text "NULL" is written `\NULL`) |
-| `DEFAULT` | column default (text: `\DEFAULT`) |
-| `+` in a key column | new row, key from its default (text: `\+`) |
-| `\|` `\\` `\n` `\t` `\r` | pipe, backslash, newline, tab, CR inside a value |
-| `\s` | a space at the start or end of a value (cells are trimmed) |
-
-- Rows are matched by primary key. A row with an unknown key (or `+`) is inserted, a missing row is deleted, so changing a key value means delete + insert.
-- Values are sent as text and cast by Postgres to the column type, so every type (json, arrays, enums, ranges…) is edited in its usual text form.
-- Each UPDATE/DELETE also checks the row's `xmin`: if someone changed the row since it was loaded, nothing is written and the row gets an error. Refresh to load the current data.
-- Values longer than `width` are cut with `…` and can't be edited in the table; hover shows the full value. Edit them in the row view, or raise `width` in the header (`0` = no limit).
-- Tables without a primary key, views and materialized views are read-only.
-- Generated columns accept only `DEFAULT`.
-- Zed soft-wraps lines longer than 512 columns whatever `soft_wrap` says, so when a page would be wider zpg cuts the widest non-key columns to a common width; if that's not enough, pick columns with `columns=`.
-
-## Navigation and row view
-
-- `F12` on a foreign key cell opens the referenced table filtered to that row; hover shows the referenced row.
-- The other way round: hover on a key cell lists the foreign keys pointing at the table, and on a data row (or in a row view) *Rows of public.orders referencing this (user_id)* opens `public.orders` filtered with `where="user_id = '5'"`; one action per such foreign key, at the end of the menu.
-- Hover on a catalog line shows the relation's columns, size and indexes; column comments (`COMMENT ON COLUMN`) show in every column hover.
-- `F12` on a primary key cell (or *Open row*) opens the row as `.pgr`, one `column: value` per line. Multi-line text is a block (`note: |` followed by lines indented by two spaces) and jsonb is pretty-printed. It is applied like the table it came from, and the table page is updated afterwards.
-- Completion: NULL/DEFAULT/`+`, booleans and enum labels in cells; column names and keywords inside `where="…"`/`order="…"`; header fields elsewhere.
-
-## Running SQL
-
-zpg also attaches to `.sql` files (install Zed's SQL extension and keep `"code_lens": "on"`):
-
-- Every statement gets a code lens `▶ Run on <conn>` (not in files over 5 MB; a lens clicked before it was redrawn finds its statement again by text, or runs nothing); `-- @conn name` picks the connection for the statements below it (not needed with a single connection). Code actions run the statement under the cursor or the selection (several statements run in one transaction).
-- Rows open in a read-only `.pgres` tab (at most `max_result_rows`, read through a cursor); other statements report their tag, e.g. `UPDATE 3`. Errors roll back and are underlined at the position Postgres reports.
-- If a result comes from one table and includes its key, *Edit rows in table* opens that table's page filtered with `where="id IN (SELECT id FROM (<query>) AS zpg_q)"`.
-- Settings: `max_result_rows` (1000), `statement_timeout_ms` (60000).
-- While a statement runs, the status bar shows *zpg: Running on <conn>*; `ctrl-.` anywhere offers *Cancel the statement running on <conn>*, and cancelling that progress (`editor: cancel language server work`) does the same: Postgres gets a cancel request and the transaction rolls back. The same goes for *Run again*, *Explain* and *Export all rows*. Other zpg requests wait until the statement ends.
-- On open and save, Postgres parses every statement (`PREPARE`, nothing runs) and its errors are underlined — misspelt tables and columns, type errors, syntax — with Postgres's own message and hint. Only statements with a known connection (`-- @conn` or a single one) are checked; below DDL in the same file, "does not exist" errors are skipped; files over 1 MB or 300 statements aren't checked. Setting: `check_sql` (true).
-- `UPDATE`/`DELETE` without `WHERE`, `TRUNCATE`, `DROP …` and `ALTER TABLE … DROP COLUMN` get a warning, and running one first asks *Run* / *Cancel* (not on `read_only` connections, where writes fail anyway).
-- *Explain* (a lens next to ▶, and a code action) runs `EXPLAIN` and opens the plan as text in `.zpg/<conn>/results/<file>.plan.txt`; the code action *Explain analyze* runs `EXPLAIN (ANALYZE, BUFFERS)`, which executes the statement, in a transaction that is rolled back.
-- Every statement that ran fine is appended to `.zpg/history.sql` with its time, outcome and `-- @conn`, so ▶ runs it again; the file keeps under 1 MB by dropping the oldest entries.
-- Table and column names of the statement's connection: completion (tables and schemas after `from`/`join`/`update`/`into`, columns after `alias.` or `table.`, tables after `schema.`), hover (a table's columns and types, a column's type), and `F12` on a table opens its page. Names are read on first use and kept for 5 minutes; DDL run from `.sql` and *Refresh catalog* reload them.
-
-## Header
-
-Edit the first line and save to reload with new settings:
-
-| Field | Meaning |
-|---|---|
-| `page`, `limit` | which rows to show |
-| `where` | SQL condition, e.g. `where="active and created_at > now() - interval '1 day'"` |
-| `order` | SQL ORDER BY list, e.g. `order=id desc` (quotes are optional for `where`, `order` and `columns`); default is the primary key |
-| `width` | max cell width, `0` = no limit |
-| `columns` | columns to show, e.g. `columns="name, email"`; key columns are always shown, hidden ones are left alone on write |
-| `apply=manual\|save` | `manual` (default) writes only with the code action *Apply changes*; `save` writes on every save |
-
-`conn`, `table`, `pk` and `total` are informational. `total` is how many rows match `where`: a `count(*)` when that takes under a second, else the planner's estimate written `~N`. Paging and sorting reuse it; *Refresh* and a new `where` count again; writes adjust it (an estimate once there is a `where`, since new rows may not match it).
-
-## Code actions (`ctrl-.`)
-
-*Apply changes*, *Preview SQL*, *Sort by <column> ↑/↓* (on the column row), *Filter: col = 'value'* / *<>* / *IS NULL* / *IS NOT NULL* (on a data cell; added to an existing `where` with AND; uses the full loaded value), *Clear filter*, *Open row*, *Insert row* (a template with `+`/DEFAULT/NULL filled in), *Next/Previous/First/Last page* (titled with the page out of the total, e.g. *Next page (2/37)*), *Rows of … referencing this*, *Refresh*, *Apply changes manually / on save*, *Show DDL*, *Export page as CSV / JSON / INSERT statements* and *Export all rows matching where= as CSV* (via `COPY`; into `.zpg/<conn>/exports/`; a page exports the loaded rows of the shown columns, not unsaved edits). In a result: *Cancel the query of pid N* / *Terminate backend pid N…* (`pg_cancel_backend` / `pg_terminate_backend`, the latter asked first; in any result with a `pid` column), *Edit rows in table*, *Run again*, *Export result as CSV / JSON*. In a row view: *Apply changes*, *Refresh row*. In the catalog: *Server activity of <conn>* (opens `.zpg/<conn>/activity.pgres` from `pg_stat_activity`: sessions with their state, transaction and query age, wait event, `blocked_by` from `pg_blocking_pids`, and query; *Run again* refreshes), *Open table*, *Show DDL* (opens `<schema>.<table>.ddl.sql`: `CREATE TABLE` with constraints, then indexes, triggers and comments, rebuilt from the system catalogs — no owners, grants or storage options), *Drop table…* (opens a `.sql` with the `DROP` to review and run with ▶; the catalog refreshes after DDL run from `.sql`), *Refresh catalog*, *Open settings file*.
-
-Pending changes are shown as a diagnostic on the header line. Changed cells and new rows are underlined via semantic tokens, which Zed only shows when enabled:
-
-```json
-"languages": {
-  "Pg Table": { "semantic_tokens": "combined" },
-  "Pg Row": { "semantic_tokens": "combined" }
-}
-```
+**Documentation (Russian): [docs/ru](docs/ru/README.md).** Demo schema to try everything on: [docs/examples/demo.sql](docs/examples/demo.sql); a walk through the `.sql` features: [docs/examples/tour.sql](docs/examples/tour.sql).
 
 ## Install
 
 ```sh
 cargo install --path crates/zpg     # puts `zpg` into ~/.cargo/bin
-rustup target add wasm32-wasip2
 ```
 
-In Zed: `zed: install dev extension` → pick this directory. Add a task (`~/.config/zed/tasks.json`) to open the catalog:
+1. In Zed: `zed: install dev extension` → pick this directory. Without `zpg` in `PATH` the extension downloads a prebuilt binary from the GitHub releases of the repository in `extension.toml`.
+2. Install Zed's **SQL** extension (for `.sql` files) and set `"code_lens": "on"`.
+3. Add a task to open the catalog (`~/.config/zed/tasks.json`):
 
-```json
-{ "label": "zpg: open catalog", "command": "zpg", "args": ["open", "$ZED_WORKTREE_ROOT"], "reveal": "never", "hide": "on_success" }
+   ```json
+   { "label": "zpg: open catalog", "command": "zpg", "args": ["open", "$ZED_WORKTREE_ROOT"], "reveal": "never", "hide": "on_success" }
+   ```
+
+4. Add connections to `~/.config/zpg/config.json` (created on first start; `zpg config` opens it):
+
+   ```jsonc
+   {
+     "connections": {
+       "local": "postgresql:///shop?host=/var/run/postgresql",
+       "prod": { "url": "postgresql:///shop?host=/var/run/postgresql", "ssh": "deploy@prod", "read_only": true },
+     },
+   }
+   ```
+
+Details: [install](docs/ru/01-install.md), [connections and settings](docs/ru/02-connections.md).
+
+## Features
+
+Everything works through Zed's own actions: **F12** (go to definition), **hover**, **completion** and **`ctrl-.`** (code actions).
+
+**Catalog** ([docs](docs/ru/04-catalog.md)) — `.zpg/catalog.pgdb` lists every connection with its tables and row estimates. Hover shows columns, size and indexes; *Show DDL* rebuilds `CREATE TABLE` with constraints, indexes, triggers and comments; *Drop…* opens the `DROP` to review.
+
+**Table pages** ([docs](docs/ru/05-table.md)) — `.pgt` files with a header line for `where`, `order`, `columns`, `page`/`limit`, `width` and `apply`, and `total` rows matching. Sort by a column, filter by a cell's value, page with *Next/Last page (2/37)*. Typed hover for json, timestamps, arrays, bytea.
+
+**Editing** ([docs](docs/ru/06-editing.md)) — `NULL`, `DEFAULT`, `+` for a new key, `\n`/`\|` escapes; *Insert row* template; *Preview SQL*; one transaction per apply; `xmin` guards against concurrent changes; `apply=save` writes on every save.
+
+**Relations** ([docs](docs/ru/07-relations.md)) — F12 on a foreign key opens the referenced row; *Rows of … referencing this* goes the other way; the `.pgr` row view edits long text and pretty-printed jsonb.
+
+**SQL files** ([docs](docs/ru/08-sql.md)) — ▶ runs a statement (`-- @conn` picks the connection), results open as `.pgres`, *Edit rows in table* turns a result into an editable page. Completion, hover and F12 for tables and columns; errors underlined on save (Postgres parses each statement, nothing runs); warnings and a *Run / Cancel* prompt for `UPDATE`/`DELETE` without `WHERE`, `TRUNCATE`, `DROP`; *Explain* / *Explain analyze* (rolled back); `.zpg/history.sql`; cancel a running statement from `ctrl-.` or the status bar.
+
+**Administration** ([docs](docs/ru/09-admin.md)) — *Server activity* from `pg_stat_activity` with `blocked_by`; cancel or terminate a backend from any result with a `pid` column.
+
+**Export** ([docs](docs/ru/10-export.md)) — a page or a result as CSV, JSON or INSERT statements; all rows matching `where` via `COPY`.
+
+All actions, settings, header fields, files and error messages: [reference](docs/ru/11-reference.md).
+
+## Development
+
+See [CLAUDE.md](CLAUDE.md) for the layout of the crates. Checks, as in CI:
+
+```sh
+cargo clippy --workspace -- -D warnings
+cargo test --workspace
+cargo build --release --target wasm32-wasip2   # needs `rustup target add wasm32-wasip2`
 ```
-
-Without `zpg` in `PATH` the extension tries to download a prebuilt binary from GitHub releases of the repository in `extension.toml`.
