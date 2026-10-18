@@ -706,11 +706,10 @@ fn count_rows(c: &mut Client, sql: &str) -> Option<u64> {
 }
 
 fn estimate_rows(c: &mut Client, sql: &str) -> Option<u64> {
+    // The extended protocol, like `fetch`: a `where` can't add statements.
     let mut tx = c.build_transaction().read_only(true).start().ok()?;
-    let msgs = tx.simple_query(sql).ok()?;
+    let plan: serde_json::Value = tx.query_one(sql, &[]).ok()?.try_get(0).ok()?;
     tx.commit().ok()?;
-    let plan = simple_rows(msgs).0.into_iter().next()?.into_iter().next()??;
-    let plan: serde_json::Value = serde_json::from_str(&plan).ok()?;
     plan[0]["Plan"]["Plan Rows"].as_f64().map(|n| n.max(0.0) as u64)
 }
 

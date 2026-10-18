@@ -204,13 +204,35 @@ pub fn one_line(sql: &str) -> Option<String> {
     Some(out.trim().to_string())
 }
 
+/// The name of a `-- @conn name` line.
+fn directive(line: &str) -> Option<String> {
+    let rest = line.trim().strip_prefix("--")?.trim().strip_prefix("@conn")?;
+    rest.split_whitespace().next().map(String::from)
+}
+
+/// Every `-- @conn name` line of `text`: the byte offset where it ends, and the name.
+pub fn conn_directives(text: &str) -> Vec<(usize, String)> {
+    let mut out = vec![];
+    let mut start = 0;
+    for line in text.split_inclusive('\n') {
+        let l = line.trim_end_matches(['\n', '\r']);
+        if let Some(name) = directive(l) {
+            out.push((start + l.len(), name));
+        }
+        start += line.len();
+    }
+    out
+}
+
+/// Connection named by the last of `directives` (see `conn_directives`) before byte `offset`.
+pub fn conn_at(directives: &[(usize, String)], offset: usize) -> Option<String> {
+    let before = directives.partition_point(|(end, _)| *end <= offset);
+    directives[..before].last().map(|(_, name)| name.clone())
+}
+
 /// Connection named by the last `-- @conn name` line before byte `offset`.
 pub fn conn_before(text: &str, offset: usize) -> Option<String> {
-    text[..offset.min(text.len())]
-        .lines()
-        .rev()
-        .filter_map(|l| l.trim().strip_prefix("--")?.trim().strip_prefix("@conn"))
-        .find_map(|rest| rest.split_whitespace().next().map(String::from))
+    conn_at(&conn_directives(text), offset)
 }
 
 #[cfg(test)]
@@ -267,5 +289,11 @@ mod tests {
         assert_eq!(conn_before(text, text.find("select 1").unwrap()), Some("a".into()));
         assert_eq!(conn_before(text, text.find("select 2").unwrap()), Some("b".into()));
         assert_eq!(conn_before("select 1", 0), None);
+        let text = "--@conn\nselect 0;\n-- @conn a\r\nselect 1;\n  -- @conn  b  \nselect 2;";
+        let d = super::conn_directives(text);
+        assert_eq!(d.iter().map(|(_, n)| n.as_str()).collect::<Vec<_>>(), vec!["a", "b"]);
+        assert_eq!(conn_at(&d, text.find("select 0").unwrap()), None);
+        assert_eq!(conn_at(&d, text.find("select 1").unwrap()).as_deref(), Some("a"));
+        assert_eq!(conn_at(&d, text.find("select 2").unwrap()).as_deref(), Some("b"));
     }
 }

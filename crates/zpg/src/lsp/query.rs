@@ -76,7 +76,7 @@ fn result_header(st: &ResultState) -> String {
         h += &format!("\n# Rows of {}: code action “Edit rows in table” opens them for editing.", e.table);
     }
     if st.more {
-        h += &format!("\n# Only the first {rows} rows are shown (lsp.zpg.settings.max_result_rows).");
+        h += &format!("\n# Only the first {rows} rows are shown (`max_result_rows` in the zpg settings).");
     }
     h
 }
@@ -102,9 +102,10 @@ impl Server {
     }
 
     /// Connections a statement at `offset` may run on: the `-- @conn` above
-    /// it, the only configured one, or (ambiguous) all of them.
-    pub(super) fn conns_for(&self, text: &str, offset: usize) -> Vec<String> {
-        if let Some(c) = sqlsplit::conn_before(text, offset) {
+    /// it (of `directives`, see `sqlsplit::conn_directives`), the only
+    /// configured one, or (ambiguous) all of them.
+    pub(super) fn conns_for(&self, directives: &[(usize, String)], offset: usize) -> Vec<String> {
+        if let Some(c) = sqlsplit::conn_at(directives, offset) {
             return vec![c];
         }
         self.settings.connections.keys().cloned().collect()
@@ -119,8 +120,9 @@ impl Server {
             return vec![];
         }
         let mut out = vec![];
+        let directives = sqlsplit::conn_directives(&doc.text);
         for r in sqlsplit::split(&doc.text) {
-            let conns = self.conns_for(&doc.text, r.start);
+            let conns = self.conns_for(&directives, r.start);
             let pos = offset_to_position(&doc.text, r.start);
             for c in &conns {
                 let title = if conns.len() == 1 { format!("▶ Run on {c}") } else { format!("▶ {c}") };
@@ -150,9 +152,10 @@ impl Server {
     pub(super) fn sql_actions(&self, doc: &Doc, key: &str, range: Range) -> Vec<CodeActionOrCommand> {
         let text = &doc.text;
         let mut out = vec![];
+        let directives = sqlsplit::conn_directives(text);
         let (a, b) = (position_to_offset(text, range.start), position_to_offset(text, range.end));
         if a < b && !text[a..b].trim().is_empty() {
-            for c in self.conns_for(text, a) {
+            for c in self.conns_for(&directives, a) {
                 let mut args = run_args(text, key, a, b, &c);
                 args.push(Value::Bool(true));
                 out.push(command(format!("zpg: Run selection on {c}"), CMD_RUN, args));
@@ -164,7 +167,7 @@ impl Server {
             .find(|r| r.start <= a && a <= r.end + 1)
             .or_else(|| stmts.iter().rev().find(|r| r.start <= a));
         if let Some(r) = at {
-            for c in self.conns_for(text, r.start) {
+            for c in self.conns_for(&directives, r.start) {
                 out.push(command(
                     format!("zpg: Run statement on {c}"),
                     CMD_RUN,
@@ -372,9 +375,10 @@ impl Server {
         let mut issues = vec![];
         let mut unreachable: Vec<String> = vec![];
         let mut after_ddl = false;
+        let directives = sqlsplit::conn_directives(&text);
         for r in ranges {
             let stmt = &text[r.clone()];
-            if let [c] = self.conns_for(&text, r.start).as_slice()
+            if let [c] = self.conns_for(&directives, r.start).as_slice()
                 && !unreachable.contains(c)
             {
                 match self.db.client(&self.settings, c) {

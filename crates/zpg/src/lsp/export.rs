@@ -76,10 +76,17 @@ impl Server {
                         db::copy_csv(c, &snap, &snap.query, timeout, &mut file)
                     })?
                     .and_then(|r| r);
+                drop(file);
                 match written {
                     Ok(n) => ("all matching rows".to_string(), n),
-                    Err(e) if running::cancelled(&e) => return show(conn, MessageType::INFO, "zpg: export cancelled".into()),
-                    Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),
+                    Err(e) => {
+                        let _ = std::fs::remove_file(&target);
+                        return if running::cancelled(&e) {
+                            show(conn, MessageType::INFO, "zpg: export cancelled".into())
+                        } else {
+                            show(conn, MessageType::ERROR, format!("zpg: {e}"))
+                        };
+                    }
                 }
             }
             "csv" | "json" | "sql" => {

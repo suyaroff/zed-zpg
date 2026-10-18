@@ -130,6 +130,8 @@ select name + 1 from zpg_demo.customers;
 | `truncate zpg_demo.events` | TRUNCATE deletes every row of zpg_demo.events |
 | `drop table …`, `drop schema …` | DROP TABLE can't be undone |
 | `alter table … drop column …` | ALTER … DROP COLUMN deletes the column with its data |
+| `explain analyze delete from zpg_demo.events` | то же, что для самого `DELETE`: `EXPLAIN ANALYZE`, запущенный через ▶, выполняет запрос и фиксирует изменения |
+| `with old as (…) delete from zpg_demo.events`, `with d as (delete from zpg_demo.events returning *) select …` | проверяются и тела CTE, и основной запрос |
 
 При запуске такого запроса (▶ или `ctrl-.`) zpg сначала спросит:
 

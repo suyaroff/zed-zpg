@@ -39,7 +39,7 @@ use zpg_core::catalog::{self, Section};
 use zpg_core::cell::{self, Value as CellValue};
 use zpg_core::diff::{self, Diff, Source};
 use zpg_core::header::display_ident;
-use zpg_core::sqlctx::Schema;
+use zpg_core::sqlctx::{self, Schema};
 use zpg_core::table::{self, Parsed};
 use zpg_core::{Apply, ForeignKey, Issue, QualName, Query, Severity, Snapshot, Total, record, sql};
 
@@ -1979,7 +1979,7 @@ fn filter_actions(snap: &Snapshot, key: &str, line: &str, ch: u32) -> Vec<CodeAc
         .map(|(cond, title)| {
             let filter = match old {
                 "" => cond,
-                o if o.to_lowercase().contains(" or ") => format!("({o}) AND {cond}"),
+                o if sqlctx::has_word(o, "or") => format!("({o}) AND {cond}"),
                 o => format!("{o} AND {cond}"),
             };
             let verb = if old.is_empty() { "Filter" } else { "Also filter" };

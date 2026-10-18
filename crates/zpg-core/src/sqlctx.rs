@@ -258,10 +258,93 @@ pub fn tables_in(sql: &str) -> Vec<TableRef> {
     out
 }
 
+/// Index of the `)` closing the `(` at `open`.
+fn close_of(toks: &[Token], open: usize) -> Option<usize> {
+    let mut depth = 0;
+    for (k, t) in toks.iter().enumerate().skip(open) {
+        match t.tok {
+            Tok::Open => depth += 1,
+            Tok::Close => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(k);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether `sql` has the unquoted word `word` outside strings and comments.
+pub fn has_word(sql: &str, word: &str) -> bool {
+    code(sql).iter().any(|t| t.is_word(&[word]))
+}
+
+/// `EXPLAIN ANALYZE <stmt>` runs `<stmt>`: its danger, if any.
+fn explain_danger(stmt: &str, toks: &[Token]) -> Option<String> {
+    let mut analyze = false;
+    let mut i = 1;
+    if toks.get(i).is_some_and(|t| t.tok == Tok::Open) {
+        let close = close_of(toks, i)?;
+        for k in i + 1..close {
+            if toks[k].is_word(&["analyze", "analyse"]) {
+                analyze = !toks.get(k + 1).is_some_and(|t| t.is_word(&["false", "off"]));
+            }
+        }
+        i = close + 1;
+    }
+    while toks.get(i).is_some_and(|t| t.is_word(&["analyze", "analyse", "verbose"])) {
+        analyze |= toks[i].is_word(&["analyze", "analyse"]);
+        i += 1;
+    }
+    if analyze { danger(&stmt[toks.get(i)?.start..]) } else { None }
+}
+
+/// The danger of a CTE body of `WITH … AS (…)`, else of the main statement.
+fn with_danger(stmt: &str, toks: &[Token]) -> Option<String> {
+    let mut i = 1;
+    if toks.get(i).is_some_and(|t| t.is_word(&["recursive"])) {
+        i += 1;
+    }
+    loop {
+        toks.get(i)?.ident()?;
+        i += 1;
+        if toks.get(i).is_some_and(|t| t.tok == Tok::Open) {
+            i = close_of(toks, i)? + 1;
+        }
+        if !toks.get(i)?.is_word(&["as"]) {
+            return None;
+        }
+        i += 1;
+        while toks.get(i).is_some_and(|t| t.is_word(&["not", "materialized"])) {
+            i += 1;
+        }
+        if toks.get(i)?.tok != Tok::Open {
+            return None;
+        }
+        let close = close_of(toks, i)?;
+        if let Some(d) = danger(&stmt[toks[i].end..toks[close].start]) {
+            return Some(d);
+        }
+        i = close + 1;
+        if toks.get(i).is_some_and(|t| t.tok == Tok::Comma) {
+            i += 1;
+            continue;
+        }
+        return danger(&stmt[toks.get(i)?.start..]);
+    }
+}
+
 /// Why a statement deserves a second look before it runs: it changes every
 /// row, or drops data for good. `None` for everything else.
 pub fn danger(stmt: &str) -> Option<String> {
     let toks = code(stmt);
+    match toks.first() {
+        Some(t) if t.is_word(&["explain"]) => return explain_danger(stmt, &toks),
+        Some(t) if t.is_word(&["with"]) => return with_danger(stmt, &toks),
+        _ => {}
+    }
     let words: Vec<&str> = toks.iter().filter_map(|t| t.ident().filter(|_| !matches!(t.tok, Tok::Ident { quoted: true, .. }))).collect();
     let target = || {
         tables_in(stmt)
@@ -631,6 +714,24 @@ mod tests {
         assert_eq!(danger("alter table t drop constraint c"), None);
         assert_eq!(danger("select * from t"), None);
         assert_eq!(danger("insert into t values (1)"), None);
+    }
+
+    #[test]
+    fn dangerous_inside_explain_and_with() {
+        let all = Some("DELETE without WHERE deletes every row of t".to_string());
+        assert_eq!(danger("explain analyze delete from t"), all);
+        assert_eq!(danger("EXPLAIN ANALYZE VERBOSE delete from t"), all);
+        assert_eq!(danger("explain (analyze, buffers) delete from t"), all);
+        assert_eq!(danger("explain (analyze false) delete from t"), None);
+        assert_eq!(danger("explain delete from t"), None);
+        assert_eq!(danger("explain analyze select * from t"), None);
+        assert_eq!(danger("with x as (select 1) delete from t"), all);
+        assert_eq!(danger("with recursive x (n) as materialized (select 1), y as (select 2) delete from t"), all);
+        assert_eq!(danger("with d as (delete from t returning *) select * from d"), all);
+        assert_eq!(danger("with x as (select 1) delete from t where id in (select * from x)"), None);
+        assert_eq!(danger("with x as (select 1) select * from x"), None);
+        assert!(has_word("a = 1 OR(b = 2)", "or"));
+        assert!(!has_word("a = 'x or y' and \"or\" = 1", "or"));
     }
 
     #[test]

@@ -75,7 +75,7 @@ impl Server {
         let doc = self.docs.get(key).filter(|d| d.kind() == Kind::Sql)?;
         let at = position_to_offset(&doc.text, pos);
         let r = sqlsplit::around(&doc.text, at);
-        let conn = self.conns_for(&doc.text, r.start).into_iter().next()?;
+        let conn = self.conns_for(&sqlsplit::conn_directives(&doc.text), r.start).into_iter().next()?;
         Some(SqlAt {
             stmt: doc.text[r.clone()].to_string(),
             offset: at - r.start,
