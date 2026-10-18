@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::sync::Arc;
 use std::time::Duration;
 
 use postgres::config::{Host, SslMode};
 use postgres::types::ToSql;
 use postgres::{Client, Config, NoTls};
+use tokio_postgres_rustls::MakeRustlsConnect;
 use zpg_core::catalog::Relation;
 use zpg_core::diff::{Diff, Op};
 use zpg_core::header::quote_ident;
@@ -14,6 +14,7 @@ use zpg_core::sqlctx::{Schema, SchemaTable};
 use zpg_core::{Apply, BackRef, Column, ForeignKey, QualName, Query, SnapRow, Snapshot, Total};
 
 use crate::config::{ConnSpec, Settings, config_path, expand_env};
+use crate::tls;
 use crate::tunnel::{self, Remote, Tunnel};
 
 pub fn fmt_err(e: &postgres::Error) -> String {
@@ -28,58 +29,25 @@ pub fn fmt_err(e: &postgres::Error) -> String {
             }
             s
         }
-        None => e.to_string(),
-    }
-}
-
-/// `sslmode=prefer/require` encrypt without checking the certificate, like libpq.
-mod tls {
-    use rustls::DigitallySignedStruct;
-    use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-    use rustls::crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature};
-    use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-
-    #[derive(Debug)]
-    pub struct NoVerify(pub CryptoProvider);
-
-    impl ServerCertVerifier for NoVerify {
-        fn verify_server_cert(
-            &self,
-            _: &CertificateDer<'_>,
-            _: &[CertificateDer<'_>],
-            _: &ServerName<'_>,
-            _: &[u8],
-            _: UnixTime,
-        ) -> Result<ServerCertVerified, rustls::Error> {
-            Ok(ServerCertVerified::assertion())
-        }
-
-        fn verify_tls12_signature(
-            &self,
-            message: &[u8],
-            cert: &CertificateDer<'_>,
-            dss: &DigitallySignedStruct,
-        ) -> Result<HandshakeSignatureValid, rustls::Error> {
-            verify_tls12_signature(message, cert, dss, &self.0.signature_verification_algorithms)
-        }
-
-        fn verify_tls13_signature(
-            &self,
-            message: &[u8],
-            cert: &CertificateDer<'_>,
-            dss: &DigitallySignedStruct,
-        ) -> Result<HandshakeSignatureValid, rustls::Error> {
-            verify_tls13_signature(message, cert, dss, &self.0.signature_verification_algorithms)
-        }
-
-        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-            self.0.signature_verification_algorithms.supported_schemes()
+        // `error performing TLS handshake` alone doesn't say what went wrong.
+        None => {
+            let mut s = e.to_string();
+            let mut cause = std::error::Error::source(e);
+            while let Some(c) = cause {
+                let text = c.to_string();
+                if !s.contains(&text) {
+                    s += &format!(": {text}");
+                }
+                cause = c.source();
+            }
+            s
         }
     }
 }
 
-fn config(url: &str, read_only: bool) -> Result<Config, String> {
-    let url = expand_env(url)?;
+/// The connection `url` describes, and what it asks of TLS beyond that.
+fn config(url: &str, read_only: bool) -> Result<(Config, tls::Options), String> {
+    let (url, tls) = tls::split(&expand_env(url)?);
     let mut cfg: Config = url.parse().map_err(|e| format!("bad connection url: {e}"))?;
     if cfg.get_connect_timeout().is_none() {
         cfg.connect_timeout(Duration::from_secs(5));
@@ -95,7 +63,7 @@ fn config(url: &str, read_only: bool) -> Result<Config, String> {
     if read_only {
         cfg.options("-c default_transaction_read_only=on");
     }
-    Ok(cfg)
+    Ok((cfg, tls))
 }
 
 /// The database the url names, as the SSH server sees it.
@@ -139,20 +107,18 @@ fn uses_tls(cfg: &Config) -> bool {
     cfg.get_hosts().iter().any(|h| matches!(h, Host::Tcp(_))) && cfg.get_ssl_mode() != SslMode::Disable
 }
 
-fn rustls_connect() -> Result<tokio_postgres_rustls::MakeRustlsConnect, String> {
-    let provider = rustls::crypto::ring::default_provider();
-    let tls = rustls::ClientConfig::builder_with_provider(provider.clone().into())
-        .with_safe_default_protocol_versions()
-        .map_err(|e| e.to_string())?
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(tls::NoVerify(provider)))
-        .with_no_client_auth();
-    Ok(tokio_postgres_rustls::MakeRustlsConnect::new(tls))
-}
-
-fn connect(cfg: &Config) -> Result<Client, String> {
-    let res = if uses_tls(cfg) { cfg.connect(rustls_connect()?) } else { cfg.connect(NoTls) };
-    res.map_err(|e| fmt_err(&e))
+fn connect(cfg: &Config, tls: Option<&MakeRustlsConnect>, opts: &tls::Options) -> Result<Client, String> {
+    let res = match tls {
+        Some(t) => cfg.connect(t.clone()),
+        None => cfg.connect(NoTls),
+    };
+    res.map_err(|e| {
+        let message = fmt_err(&e);
+        match tls::hint(opts, &message) {
+            Some(hint) => format!("{message}\n{hint}"),
+            None => message,
+        }
+    })
 }
 
 /// Cancels whatever a client is running, from another thread: Postgres's
@@ -160,12 +126,16 @@ fn connect(cfg: &Config) -> Result<Client, String> {
 #[derive(Clone)]
 pub struct Canceller {
     token: postgres::CancelToken,
-    tls: bool,
+    /// The client's own TLS, certificate checks included.
+    tls: Option<MakeRustlsConnect>,
 }
 
 impl Canceller {
     pub fn cancel(&self) -> Result<(), String> {
-        let res = if self.tls { self.token.cancel_query(rustls_connect()?) } else { self.token.cancel_query(NoTls) };
+        let res = match &self.tls {
+            Some(t) => self.token.cancel_query(t.clone()),
+            None => self.token.cancel_query(NoTls),
+        };
         res.map_err(|e| fmt_err(&e))
     }
 }
@@ -175,8 +145,12 @@ struct Session {
     client: Client,
     /// The SSH tunnel it goes through, if any; closed when the session is dropped.
     tunnel: Option<Tunnel>,
-    /// Whether the connection uses TLS, which its cancel request needs too.
-    tls: bool,
+    /// TLS of the connection, which its cancel request needs too; `None` without.
+    tls: Option<MakeRustlsConnect>,
+    /// What the url asks of TLS, for `pg_dump`.
+    tls_opts: tls::Options,
+    /// The database host behind the tunnel, which the certificate is for.
+    remote_host: Option<String>,
     /// What the client connected with, through its tunnel if any.
     config: Config,
 }
@@ -184,20 +158,25 @@ struct Session {
 impl Session {
     /// Connects as `spec` says, through `old` when it's a tunnel still up.
     fn open(spec: &ConnSpec, mut old: Option<Tunnel>) -> Result<Self, String> {
-        let mut config = config(spec.url(), spec.read_only())?;
+        let (mut config, tls_opts) = config(spec.url(), spec.read_only())?;
+        let mut remote_host = None;
         let tunnel = match spec.ssh() {
             Some((target, options)) => {
                 let t = match old.take_if(|t| t.alive()) {
                     Some(t) => t,
                     None => tunnel::open(&expand_env(target)?, options, &remote_of(&config))?,
                 };
+                if let Some(Host::Tcp(h)) = config.get_hosts().first() {
+                    remote_host = Some(h.clone());
+                }
                 config = through_tunnel(&config, t.port);
                 Some(t)
             }
             None => None,
         };
-        let client = connect(&config)?;
-        Ok(Self { client, tunnel, tls: uses_tls(&config), config })
+        let tls = uses_tls(&config).then(|| tls::connector(&tls_opts, remote_host.as_deref())).transpose()?;
+        let client = connect(&config, tls.as_ref(), &tls_opts)?;
+        Ok(Self { client, tunnel, tls, tls_opts, remote_host, config })
     }
 
     /// Whether the client can still be used: not closed, and its tunnel (when `spec` wants one) still up.
@@ -221,10 +200,22 @@ impl Db {
     /// to reach the database of `conn` as its client does, password off the
     /// command line. Connect with `client` first.
     pub fn pg_env(&self, conn: &str) -> Option<Vec<(&'static str, String)>> {
-        let cfg = &self.sessions.get(conn)?.config;
+        let s = self.sessions.get(conn)?;
+        let cfg = &s.config;
         let mut env = vec![("PGAPPNAME", "zpg pg_dump".to_string())];
         match cfg.get_hosts().first() {
-            Some(Host::Tcp(h)) => env.push(("PGHOST", h.clone())),
+            // Through a tunnel `verify-full` checks the certificate against
+            // the database host while connecting to the tunnel's end.
+            Some(Host::Tcp(h)) if s.tls_opts.verify == tls::Verify::Full && s.remote_host.is_some() => {
+                env.push(("PGHOST", s.remote_host.clone().unwrap_or_default()));
+                env.push(("PGHOSTADDR", h.clone()));
+            }
+            Some(Host::Tcp(h)) => {
+                env.push(("PGHOST", h.clone()));
+                if let Some(a) = cfg.get_hostaddrs().first() {
+                    env.push(("PGHOSTADDR", a.to_string()));
+                }
+            }
             #[cfg(unix)]
             Some(Host::Unix(dir)) => env.push(("PGHOST", dir.display().to_string())),
             _ => {}
@@ -247,19 +238,28 @@ impl Db {
         if let Some(t) = cfg.get_connect_timeout() {
             env.push(("PGCONNECT_TIMEOUT", t.as_secs().max(1).to_string()));
         }
-        let ssl = match cfg.get_ssl_mode() {
-            SslMode::Disable => "disable",
-            SslMode::Require => "require",
+        let ssl = match (s.tls_opts.verify, cfg.get_ssl_mode()) {
+            (tls::Verify::Full, _) => "verify-full",
+            (tls::Verify::Ca, _) => "verify-ca",
+            (_, SslMode::Disable) => "disable",
+            (_, SslMode::Require) => "require",
             _ => "prefer",
         };
         env.push(("PGSSLMODE", ssl.to_string()));
+        if s.tls_opts.verify != tls::Verify::No {
+            let root = match s.tls_opts.roots() {
+                tls::Roots::File(p) => p.display().to_string(),
+                tls::Roots::System => "system".into(),
+            };
+            env.push(("PGSSLROOTCERT", root));
+        }
         Some(env)
     }
 
     /// For the client of `conn` as it is now; connect with `client` first.
     pub fn canceller(&self, conn: &str) -> Option<Canceller> {
         let s = self.sessions.get(conn)?;
-        Some(Canceller { token: s.client.cancel_token(), tls: s.tls })
+        Some(Canceller { token: s.client.cancel_token(), tls: s.tls.clone() })
     }
 
     /// The client of `conn`, connecting when it has none or it's closed.

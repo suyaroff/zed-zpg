@@ -2,6 +2,7 @@ mod config;
 mod db;
 mod lsp;
 mod state;
+mod tls;
 mod tunnel;
 
 use std::path::{Path, PathBuf};

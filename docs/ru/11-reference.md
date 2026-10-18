@@ -205,6 +205,9 @@
 | ``no connection `x` in …`` | в файле подключение, которого нет в настройках | добавьте его в `~/.config/zpg/config.json` |
 | `environment variable X is not set` | в URL есть `${X}`, а переменной нет | задайте переменную и перезапустите Zed |
 | `error communicating with the server`, `terminating connection…` при записи или запуске SQL | соединение оборвалось во время выполнения | нажмите ещё раз — zpg подключится заново; чтение повторяется само, см. [Обрыв соединения](02-connections.md#обрыв-соединения) |
+| `invalid peer certificate: UnknownIssuer` | `verify-ca`/`verify-full`, а сертификат подписан не доверенным CA | укажите CA в `sslrootcert`, см. [TLS](02-connections.md#tls-и-проверка-сертификата); или `sslmode=require` — без проверки |
+| `invalid peer certificate: certificate not valid for name …` | `verify-full`, а сертификат выдан на другое имя | подключайтесь по имени из сертификата (`host=имя hostaddr=адрес`) или `sslmode=verify-ca` |
+| `sslrootcert …: No such file or directory` | нет файла из `sslrootcert` | проверьте путь |
 | `ssh to …: Host key verification failed` | сервера нет в `known_hosts` | один раз зайдите на сервер `ssh` из терминала |
 | `ssh to …: Permission denied (publickey…)` | ключ не подошёл или не в agent | `ssh-add`, проверьте `~/.ssh/config`; вход по паролю не поддерживается |
 | `ssh to …: no tunnel after 20 s` | ssh завис на подключении | проверьте доступность сервера и `ProxyJump` |
@@ -234,7 +237,7 @@
 - Сервер обрабатывает одно действие за раз: пока идёт запрос, hover и автодополнение ждут. Запрос можно [отменить](08-sql.md#отмена-долгого-запроса), а длительность ограничивает `statement_timeout_ms`.
 - Запросы с параметрами `$1` выполнить нельзя (их некуда подставить); проверка запросов их пропускает. Команды `psql` (`\d`, `\copy`) не поддерживаются.
 - Страница загружается в буфер целиком. Для больших таблиц используйте `where` и `limit`, а не листайте тысячи страниц.
-- TLS без проверки сертификата (`verify-ca`, `verify-full` не поддерживаются); SSH — только по ключу.
+- Сертификат сервера проверяется только при `sslmode=verify-ca` / `verify-full`; клиентские сертификаты (`sslcert`, `sslkey`) не поддерживаются; SSH — только по ключу.
 - В режиме `apply=save` каждое сохранение сразу пишется в базу. С автосохранением Zed (`"autosave"`) используйте только `manual`.
 - DDL из **Show DDL** не включает владельцев, права и параметры хранения — для полного дампа используйте `pg_dump`.
 

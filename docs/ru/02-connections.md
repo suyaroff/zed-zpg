@@ -69,6 +69,7 @@
 | то же, формат key=value | `host=/var/run/postgresql dbname=shop` |
 | по сети с паролем | `postgresql://app:secret@db.example.com:5432/shop` |
 | без TLS | `postgresql://app@db.example.com/shop?sslmode=disable` |
+| с проверкой сертификата | `postgresql://app@db.example.com/shop?sslmode=verify-full` |
 
 - **Пользователь** по умолчанию — `$USER`.
 - **Пароль** можно писать прямо в URL: файл настроек лежит вне проектов. Если хочется держать его в переменной окружения, используйте `${VAR}`: значение берётся из окружения проекта (direnv или окружение, из которого запущен Zed). Если переменной нет, будет ошибка `environment variable X is not set`.
@@ -77,8 +78,37 @@
   "stage": "postgresql://app:${STAGE_PG_PASSWORD}@stage-db/shop"
   ```
 
-- **TLS.** `sslmode=prefer` (по умолчанию) и `require` шифруют соединение без проверки сертификата, как libpq. `verify-ca` и `verify-full` не поддерживаются. Unix-сокеты и `sslmode=disable` работают без TLS.
+- **TLS** — см. [ниже](#tls-и-проверка-сертификата).
 - zpg представляется серверу как `application_name=zpg` — его сессии видно в [активности сервера](09-admin.md).
+
+## TLS и проверка сертификата
+
+`sslmode` работает как в libpq:
+
+| `sslmode` | Шифрование | Проверка сертификата |
+|---|---|---|
+| `disable` | нет | — |
+| `prefer` (по умолчанию) | если сервер умеет | нет |
+| `require` | обязательно | нет |
+| `verify-ca` | обязательно | подписан доверенным CA |
+| `verify-full` | обязательно | подписан доверенным CA и выдан на хост из URL |
+
+Без проверки соединение зашифровано, но подменённый сервер (MITM) не заметить. Для баз в чужой сети используйте `verify-full`; отключить проверку — вернуть `require`.
+
+Доверенные корневые сертификаты:
+
+- **`sslrootcert=/путь/ca.pem`** — PEM-файл с CA сервера (можно `~/…`); `sslrootcert=system` — системное хранилище;
+- иначе **`~/.postgresql/root.crt`**, как в libpq;
+- иначе **системное хранилище**. Подходит облачным базам с сертификатом публичного CA; для своего или облачного CA (например, Amazon RDS) скачайте его и укажите в `sslrootcert`.
+
+```json
+"prod": "postgresql://app@db.example.com/shop?sslmode=verify-full&sslrootcert=~/certs/prod-ca.pem"
+```
+
+- **Через SSH** имя сертификата сверяется с хостом из `url` (тем, что видит сервер), а не с локальным концом туннеля.
+- **Хост по IP или чужое имя.** `verify-full` сверяет то имя, которое написано в `url`. Если подключаетесь по адресу, а сертификат выдан на имя, задайте оба: `host=db.example.com hostaddr=10.0.0.5`.
+- Те же настройки получает `pg_dump` при [бэкапе](04-catalog.md#бэкап-таблицы-pg_dump) (`PGSSLMODE`, `PGSSLROOTCERT`).
+- Клиентские сертификаты (`sslcert`, `sslkey`) не поддерживаются.
 
 ## Только чтение
 

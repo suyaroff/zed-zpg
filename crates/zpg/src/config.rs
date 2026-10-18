@@ -110,6 +110,7 @@ pub const TEMPLATE: &str = r#"// zpg settings, shared by all projects. Keep this
   "connections": {
     // "local": "postgresql:///mydb?host=/var/run/postgresql",
     // "prod": { "url": "postgresql://app:secret@db.example.com/app", "read_only": true },
+    // "cloud": "postgresql://app:${CLOUD_PG_PASSWORD}@db.example.com/app?sslmode=verify-full",
     // "remote": { "url": "postgresql:///app?host=/var/run/postgresql", "ssh": "deploy@prod", "ssh_options": ["-p", "2222"] },
   },
   // "page_size": 100,
@@ -276,7 +277,7 @@ mod tests {
         // Uncommenting any example line keeps it valid.
         let all = TEMPLATE.replace("    // \"", "    \"").replace("  // \"", "  \"");
         let s = Settings::parse(&all).unwrap();
-        assert_eq!(s.connections.len(), 3);
+        assert_eq!(s.connections.len(), 4);
         assert_eq!(s.statement_timeout_ms, 60_000);
     }
 
