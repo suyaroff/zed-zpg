@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,7 +13,7 @@ use zpg_core::sql::{self, Stmt};
 use zpg_core::sqlctx::{Schema, SchemaTable};
 use zpg_core::{Apply, BackRef, Column, ForeignKey, QualName, Query, SnapRow, Snapshot, Total};
 
-use crate::config::{Settings, config_path, expand_env};
+use crate::config::{ConnSpec, Settings, config_path, expand_env};
 use crate::tunnel::{self, Remote, Tunnel};
 
 pub fn fmt_err(e: &postgres::Error) -> String {
@@ -169,29 +170,58 @@ impl Canceller {
     }
 }
 
+/// An open connection and what it was opened with.
+struct Session {
+    client: Client,
+    /// The SSH tunnel it goes through, if any; closed when the session is dropped.
+    tunnel: Option<Tunnel>,
+    /// Whether the connection uses TLS, which its cancel request needs too.
+    tls: bool,
+    /// What the client connected with, through its tunnel if any.
+    config: Config,
+}
+
+impl Session {
+    /// Connects as `spec` says, through `old` when it's a tunnel still up.
+    fn open(spec: &ConnSpec, mut old: Option<Tunnel>) -> Result<Self, String> {
+        let mut config = config(spec.url(), spec.read_only())?;
+        let tunnel = match spec.ssh() {
+            Some((target, options)) => {
+                let t = match old.take_if(|t| t.alive()) {
+                    Some(t) => t,
+                    None => tunnel::open(&expand_env(target)?, options, &remote_of(&config))?,
+                };
+                config = through_tunnel(&config, t.port);
+                Some(t)
+            }
+            None => None,
+        };
+        let client = connect(&config)?;
+        Ok(Self { client, tunnel, tls: uses_tls(&config), config })
+    }
+
+    /// Whether the client can still be used: not closed, and its tunnel (when `spec` wants one) still up.
+    fn alive(&mut self, spec: &ConnSpec) -> bool {
+        !self.client.is_closed() && (spec.ssh().is_none() || self.tunnel.as_mut().is_some_and(Tunnel::alive))
+    }
+}
+
+/// The open connections, by name.
 #[derive(Default)]
 pub struct Db {
-    clients: HashMap<String, Client>,
-    tunnels: HashMap<String, Tunnel>,
-    /// Whether each client's connection uses TLS, which its cancel request needs too.
-    tls: HashMap<String, bool>,
-    /// What each client connected with, through its tunnel if any.
-    configs: HashMap<String, Config>,
+    sessions: HashMap<String, Session>,
 }
 
 impl Db {
     pub fn clear(&mut self) {
-        self.clients.clear();
-        self.tunnels.clear();
-        self.tls.clear();
-        self.configs.clear();
+        self.sessions.clear();
     }
 
     /// libpq environment (`PGHOST`, `PGPASSWORD`…) for a tool like `pg_dump`
     /// to reach the database of `conn` as its client does, password off the
     /// command line. Connect with `client` first.
     pub fn pg_env(&self, conn: &str) -> Option<Vec<(&'static str, String)>> {
-        let cfg = self.configs.get(conn)?;
+        let cfg = &self.sessions.get(conn)?.config;
         let mut env = vec![("PGAPPNAME", "zpg pg_dump".to_string())];
         match cfg.get_hosts().first() {
             Some(Host::Tcp(h)) => env.push(("PGHOST", h.clone())),
@@ -228,10 +258,8 @@ impl Db {
 
     /// For the client of `conn` as it is now; connect with `client` first.
     pub fn canceller(&self, conn: &str) -> Option<Canceller> {
-        Some(Canceller {
-            token: self.clients.get(conn)?.cancel_token(),
-            tls: self.tls.get(conn).copied().unwrap_or(false),
-        })
+        let s = self.sessions.get(conn)?;
+        Some(Canceller { token: s.client.cancel_token(), tls: s.tls })
     }
 
     pub fn client(&mut self, settings: &Settings, conn: &str) -> Result<&mut Client, String> {
@@ -240,24 +268,18 @@ impl Db {
             format!("no connection `{conn}` in {file}")
         })?;
         // A dead tunnel means a dead connection, even before a query notices.
-        if spec.ssh().is_some() && !self.tunnels.get_mut(conn).is_some_and(Tunnel::alive) {
-            self.clients.remove(conn);
-        }
-        if self.clients.get(conn).is_none_or(|c| c.is_closed()) {
-            let mut cfg = config(spec.url(), spec.read_only())?;
-            if let Some((target, options)) = spec.ssh() {
-                if !self.tunnels.get_mut(conn).is_some_and(Tunnel::alive) {
-                    let t = tunnel::open(&expand_env(target)?, options, &remote_of(&cfg))?;
-                    self.tunnels.insert(conn.to_string(), t);
-                }
-                cfg = through_tunnel(&cfg, self.tunnels[conn].port);
+        let alive = self.sessions.get_mut(conn).is_some_and(|s| s.alive(spec));
+        let session = match self.sessions.entry(conn.to_string()) {
+            Entry::Occupied(o) if alive => o.into_mut(),
+            // A closed client's tunnel may still be up: connect through it again.
+            Entry::Occupied(mut o) => {
+                let old = o.get_mut().tunnel.take();
+                o.insert(Session::open(spec, old)?);
+                o.into_mut()
             }
-            let c = connect(&cfg)?;
-            self.clients.insert(conn.to_string(), c);
-            self.tls.insert(conn.to_string(), uses_tls(&cfg));
-            self.configs.insert(conn.to_string(), cfg);
-        }
-        Ok(self.clients.get_mut(conn).unwrap())
+            Entry::Vacant(v) => v.insert(Session::open(spec, None)?),
+        };
+        Ok(&mut session.client)
     }
 }
 
