@@ -2116,7 +2116,7 @@ checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
 name = "zpg"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "clap",
@@ -2136,7 +2136,7 @@ dependencies = [
 
 [[package]]
 name = "zpg-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "unicode-width",
@@ -2144,7 +2144,7 @@ dependencies = [
 
 [[package]]
 name = "zpg-extension"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "zed_extension_api",
 ]
