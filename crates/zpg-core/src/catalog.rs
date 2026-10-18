@@ -20,9 +20,7 @@ pub struct Section {
 }
 
 pub fn render(sections: &[Section]) -> String {
-    let mut out = format!(
-        "{HEADER}\n# Go to definition (F12) on a table opens it; code actions refresh.\n"
-    );
+    let mut out = format!("{HEADER}\n# Go to definition (F12) on a table opens it; code actions refresh.\n");
     if sections.is_empty() {
         out += "\n# No connections. Add them to ~/.config/zpg/config.json (code action: Open settings file):\n\
                 # \"connections\": { \"local\": \"postgresql:///mydb?host=/var/run/postgresql\" }\n";
@@ -112,37 +110,20 @@ mod tests {
             Section {
                 conn: "local".into(),
                 relations: Ok(vec![
-                    Relation {
-                        name: QualName::new("public", "users"),
-                        kind: "table".into(),
-                        rows: Some(10),
-                    },
-                    Relation {
-                        name: QualName::new("public", "My View"),
-                        kind: "view".into(),
-                        rows: None,
-                    },
+                    Relation { name: QualName::new("public", "users"), kind: "table".into(), rows: Some(10) },
+                    Relation { name: QualName::new("public", "My View"), kind: "view".into(), rows: None },
                 ]),
             },
-            Section {
-                conn: "prod".into(),
-                relations: Err("connection refused".into()),
-            },
+            Section { conn: "prod".into(), relations: Err("connection refused".into()) },
         ]);
         let lines: Vec<&str> = text.lines().collect();
         let users = lines.iter().position(|l| l.starts_with("public.users")).unwrap() as u32;
         assert_eq!(entry_at(&text, users), Some(("local".into(), QualName::new("public", "users"))));
-        assert_eq!(
-            entry_at(&text, users + 1),
-            Some(("local".into(), QualName::new("public", "My View")))
-        );
+        assert_eq!(entry_at(&text, users + 1), Some(("local".into(), QualName::new("public", "My View"))));
         assert!(text.contains("! connection refused"));
         assert_eq!(entry_at(&text, 0), None);
         assert_eq!(kind_at(&text, users + 1).as_deref(), Some("view"));
-        assert_eq!(
-            drop_statement("view", &QualName::new("public", "My View")),
-            r#"DROP VIEW "public"."My View""#
-        );
+        assert_eq!(drop_statement("view", &QualName::new("public", "My View")), r#"DROP VIEW "public"."My View""#);
     }
 
     #[test]

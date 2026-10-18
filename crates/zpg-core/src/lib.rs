@@ -6,13 +6,13 @@ pub mod header;
 pub mod history;
 pub mod record;
 pub mod snapshot;
+pub mod sql;
 pub mod sqlctx;
 pub mod sqlsplit;
-pub mod sql;
 pub mod table;
 
 pub use header::{Apply, QualName, Query, TableHeader, Total};
-pub use snapshot::{BackRef, Column, ForeignKey, Snapshot, SnapRow};
+pub use snapshot::{BackRef, Column, ForeignKey, SnapRow, Snapshot};
 
 pub const MAGIC: &str = "# zpg v1";
 
@@ -35,13 +35,7 @@ pub struct Issue {
 
 impl Issue {
     pub fn error(line: u32, start: u32, end: u32, message: impl Into<String>) -> Self {
-        Self {
-            line,
-            start,
-            end,
-            severity: Severity::Error,
-            message: message.into(),
-        }
+        Self { line, start, end, severity: Severity::Error, message: message.into() }
     }
 
     pub fn line_error(line: u32, text: &str, message: impl Into<String>) -> Self {

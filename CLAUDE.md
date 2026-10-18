@@ -9,6 +9,7 @@ zpg is a Zed extension that shows PostgreSQL tables as text buffers and writes e
 Same checks as CI (`.github/workflows/ci.yml`):
 
 ```sh
+cargo fmt --all --check                        # rustfmt.toml
 cargo clippy --workspace -- -D warnings
 cargo test --workspace
 cargo build --release --target wasm32-wasip2   # the Zed extension (root crate); needs `rustup target add wasm32-wasip2`

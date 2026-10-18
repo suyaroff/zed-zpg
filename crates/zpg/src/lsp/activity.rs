@@ -63,12 +63,8 @@ impl Server {
         let Some(row) = table::parse(text).rows.iter().position(|r| r.line == line) else {
             return vec![];
         };
-        let Some(pid) = st
-            .snap
-            .rows
-            .get(row)
-            .and_then(|r| r.values[col].as_deref())
-            .and_then(|v| v.parse::<i32>().ok())
+        let Some(pid) =
+            st.snap.rows.get(row).and_then(|r| r.values[col].as_deref()).and_then(|v| v.parse::<i32>().ok())
         else {
             return vec![];
         };
@@ -81,7 +77,14 @@ impl Server {
 
     /// `pg_cancel_backend` / `pg_terminate_backend` (asked first) on the
     /// connection of result `key`, then reruns the result.
-    pub(super) fn signal(&mut self, conn: &Connection, key: &str, pid: i32, terminate: bool, confirmed: bool) -> Res<()> {
+    pub(super) fn signal(
+        &mut self,
+        conn: &Connection,
+        key: &str,
+        pid: i32,
+        terminate: bool,
+        confirmed: bool,
+    ) -> Res<()> {
         let Some(path) = self.docs.get(key).and_then(|d| d.path()) else {
             return Ok(());
         };

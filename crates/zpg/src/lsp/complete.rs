@@ -1,6 +1,4 @@
-use lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionTextEdit, InsertTextFormat, Position, Range, TextEdit,
-};
+use lsp_types::{CompletionItem, CompletionItemKind, CompletionTextEdit, InsertTextFormat, Position, Range, TextEdit};
 use zpg_core::cell;
 use zpg_core::header::display_ident;
 use zpg_core::{Column, Snapshot};
@@ -83,10 +81,7 @@ pub fn header(line: &str, pos: Position, snap: &Snapshot) -> Vec<CompletionItem>
         }
         i += 1;
     }
-    let start = chars[..idx]
-        .iter()
-        .rposition(|c| !(c.is_alphanumeric() || *c == '_'))
-        .map_or(0, |p| p + 1);
+    let start = chars[..idx].iter().rposition(|c| !(c.is_alphanumeric() || *c == '_')).map_or(0, |p| p + 1);
     let start16: u32 = chars[..start].iter().map(|c| c.len_utf16() as u32).sum();
     let range = Range::new(Position::new(pos.line, start16), pos);
 

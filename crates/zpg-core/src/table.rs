@@ -88,11 +88,7 @@ pub fn split(text: &str) -> Vec<CellRef> {
             let lead = seg.len() - seg.trim_start_matches([' ', '\t']).len();
             let body = seg.trim_matches([' ', '\t']);
             let col = utf16_len(&text[..a + lead.min(seg.len())]);
-            CellRef {
-                text: body.to_string(),
-                start: col,
-                end: col + utf16_len(body),
-            }
+            CellRef { text: body.to_string(), start: col, end: col + utf16_len(body) }
         })
         .collect()
 }
@@ -111,9 +107,7 @@ pub fn parse(text: &str) -> Parsed {
         let n = n as u32 + 1;
         match classify(line) {
             Kind::Skip | Kind::Separator => {}
-            Kind::Junk => p
-                .issues
-                .push(Issue::line_error(n, line, "expected a table row starting with `|`")),
+            Kind::Junk => p.issues.push(Issue::line_error(n, line, "expected a table row starting with `|`")),
             Kind::Table(cells) => {
                 let l = Line { line: n, cells };
                 if p.columns.is_none() {
@@ -176,11 +170,8 @@ pub fn render(header_line: &str, columns: &[String], cells: &[Vec<String>]) -> S
 /// Re-pads table lines without touching cell contents. `None` if nothing changes.
 pub fn realign(text: &str) -> Option<String> {
     let lines: Vec<&str> = text.split('\n').collect();
-    let kinds: Vec<Kind> = lines
-        .iter()
-        .enumerate()
-        .map(|(i, l)| if i == 0 { Kind::Skip } else { classify(l) })
-        .collect();
+    let kinds: Vec<Kind> =
+        lines.iter().enumerate().map(|(i, l)| if i == 0 { Kind::Skip } else { classify(l) }).collect();
     let rows: Vec<Vec<String>> = kinds
         .iter()
         .filter_map(|k| match k {

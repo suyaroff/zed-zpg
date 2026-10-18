@@ -7,9 +7,9 @@ use postgres::types::ToSql;
 use postgres::{Client, Config, NoTls};
 use zpg_core::catalog::Relation;
 use zpg_core::diff::{Diff, Op};
+use zpg_core::header::quote_ident;
 use zpg_core::sql::{self, Stmt};
 use zpg_core::sqlctx::{Schema, SchemaTable};
-use zpg_core::header::quote_ident;
 use zpg_core::{Apply, BackRef, Column, ForeignKey, QualName, Query, SnapRow, Snapshot, Total};
 
 use crate::config::{Settings, config_path, expand_env};
@@ -235,13 +235,10 @@ impl Db {
     }
 
     pub fn client(&mut self, settings: &Settings, conn: &str) -> Result<&mut Client, String> {
-        let spec = settings
-            .connections
-            .get(conn)
-            .ok_or_else(|| {
-                let file = config_path().map_or("the zpg settings file".into(), |p| p.display().to_string());
-                format!("no connection `{conn}` in {file}")
-            })?;
+        let spec = settings.connections.get(conn).ok_or_else(|| {
+            let file = config_path().map_or("the zpg settings file".into(), |p| p.display().to_string());
+            format!("no connection `{conn}` in {file}")
+        })?;
         // A dead tunnel means a dead connection, even before a query notices.
         if spec.ssh().is_some() && !self.tunnels.get_mut(conn).is_some_and(Tunnel::alive) {
             self.clients.remove(conn);
@@ -269,10 +266,7 @@ fn params(stmt: &Stmt) -> Vec<&(dyn ToSql + Sync)> {
 }
 
 fn to_row(r: &postgres::Row) -> SnapRow {
-    SnapRow {
-        xmin: r.get(0),
-        values: (1..r.len()).map(|i| r.get(i)).collect(),
-    }
+    SnapRow { xmin: r.get(0), values: (1..r.len()).map(|i| r.get(i)).collect() }
 }
 
 pub fn catalog(c: &mut Client) -> Result<Vec<Relation>, String> {
@@ -327,25 +321,19 @@ pub fn schema(c: &mut Client) -> Result<Schema, String> {
         )
         .map_err(|e| fmt_err(&e))?;
     for r in &rows {
-        columns
-            .entry(QualName::new(r.get::<_, String>(0), r.get::<_, String>(1)))
-            .or_default()
-            .push(Column {
-                name: r.get(2),
-                type_name: r.get(3),
-                not_null: r.get(4),
-                has_default: r.get(5),
-                generated: r.get(6),
-                enum_values: vec![],
-                comment: r.get(7),
-            });
+        columns.entry(QualName::new(r.get::<_, String>(0), r.get::<_, String>(1))).or_default().push(Column {
+            name: r.get(2),
+            type_name: r.get(3),
+            not_null: r.get(4),
+            has_default: r.get(5),
+            generated: r.get(6),
+            enum_values: vec![],
+            comment: r.get(7),
+        });
     }
     let tables = catalog(c)?
         .into_iter()
-        .map(|rel| SchemaTable {
-            columns: columns.remove(&rel.name).unwrap_or_default(),
-            rel,
-        })
+        .map(|rel| SchemaTable { columns: columns.remove(&rel.name).unwrap_or_default(), rel })
         .collect();
     Ok(Schema { tables })
 }
@@ -522,11 +510,7 @@ pub fn details(c: &mut Client, table: &QualName) -> Result<Details, String> {
         })
         .collect();
     tx.commit().map_err(|e| fmt_err(&e))?;
-    Ok(Details {
-        size: r.get::<_, Option<String>>(0).unwrap_or_default(),
-        comment: r.get(1),
-        indexes,
-    })
+    Ok(Details { size: r.get::<_, Option<String>>(0).unwrap_or_default(), comment: r.get(1), indexes })
 }
 
 pub struct Defaults {
@@ -674,11 +658,16 @@ pub fn load(c: &mut Client, conn: &str, table: &QualName, d: &Defaults) -> Resul
 }
 
 /// Writes every row of the page's query as CSV to `out`; returns the bytes written.
-pub fn copy_csv(c: &mut Client, snap: &Snapshot, q: &Query, timeout_ms: u64, out: &mut impl std::io::Write) -> Result<u64, String> {
+pub fn copy_csv(
+    c: &mut Client,
+    snap: &Snapshot,
+    q: &Query,
+    timeout_ms: u64,
+    out: &mut impl std::io::Write,
+) -> Result<u64, String> {
     let mut tx = c.build_transaction().read_only(true).start().map_err(|e| fmt_err(&e))?;
     if timeout_ms > 0 {
-        tx.batch_execute(&format!("SET LOCAL statement_timeout = {timeout_ms}"))
-            .map_err(|e| fmt_err(&e))?;
+        tx.batch_execute(&format!("SET LOCAL statement_timeout = {timeout_ms}")).map_err(|e| fmt_err(&e))?;
     }
     let mut reader = tx.copy_out(&sql::copy_csv(snap, q)).map_err(|e| fmt_err(&e))?;
     let n = std::io::copy(&mut reader, out).map_err(|e| e.to_string())?;
@@ -725,7 +714,12 @@ pub fn fetch(c: &mut Client, snap: &Snapshot, q: &Query) -> Result<Vec<SnapRow>,
 }
 
 /// One row by key values (as text); see `sql::select_row`.
-pub fn fetch_row(c: &mut Client, snap: &Snapshot, key: &[Option<String>], pretty: bool) -> Result<Option<SnapRow>, String> {
+pub fn fetch_row(
+    c: &mut Client,
+    snap: &Snapshot,
+    key: &[Option<String>],
+    pretty: bool,
+) -> Result<Option<SnapRow>, String> {
     let stmt = sql::select_row(snap, key, pretty);
     let mut tx = c.build_transaction().read_only(true).start().map_err(|e| fmt_err(&e))?;
     let row = tx.query_opt(&stmt.sql, &params(&stmt)).map_err(|e| fmt_err(&e))?;
@@ -800,9 +794,7 @@ pub fn referenced(
         .iter()
         .zip(&fk.columns)
         .enumerate()
-        .map(|(i, (rc, &lc))| {
-            format!("{} = CAST(${}::text AS {})", quote_ident(rc), i + 1, snap.columns[lc].type_name)
-        })
+        .map(|(i, (rc, &lc))| format!("{} = CAST(${}::text AS {})", quote_ident(rc), i + 1, snap.columns[lc].type_name))
         .collect();
     let sql = format!("SELECT {} FROM {target} WHERE {} LIMIT 1", select.join(", "), cond.join(" AND "));
     let params: Vec<&(dyn ToSql + Sync)> = values.iter().map(|v| v as &(dyn ToSql + Sync)).collect();
@@ -855,11 +847,7 @@ fn run_err(stmt: usize, e: &postgres::Error) -> RunError {
         Some(postgres::error::ErrorPosition::Original(p)) => Some(*p as usize),
         _ => None,
     });
-    RunError {
-        stmt,
-        message: fmt_err(e),
-        position,
-    }
+    RunError { stmt, message: fmt_err(e), position }
 }
 
 fn first_word(sql: &str) -> String {
@@ -913,12 +901,7 @@ pub fn run(
         {
             let msgs = c.simple_query(stmts[0]).map_err(|e| run_err(0, &e))?;
             let (_, n) = simple_rows(msgs);
-            Ok(vec![Outcome {
-                tag: tag(stmts[0], n),
-                columns: vec![],
-                rows: vec![],
-                more: false,
-            }])
+            Ok(vec![Outcome { tag: tag(stmts[0], n), columns: vec![], rows: vec![], more: false }])
         }
         r => r,
     }
@@ -934,20 +917,14 @@ fn run_in_tx(
 ) -> Result<Vec<Outcome>, RunError> {
     let mut tx = c.build_transaction().read_only(read_only).start().map_err(|e| run_err(0, &e))?;
     if timeout_ms > 0 {
-        tx.batch_execute(&format!("SET LOCAL statement_timeout = {timeout_ms}"))
-            .map_err(|e| run_err(0, &e))?;
+        tx.batch_execute(&format!("SET LOCAL statement_timeout = {timeout_ms}")).map_err(|e| run_err(0, &e))?;
     }
     let mut out = vec![];
     for (k, sql) in stmts.iter().enumerate() {
         let prepared = tx.prepare(sql).map_err(|e| run_err(k, &e))?;
         if prepared.columns().is_empty() {
             let (_, n) = simple_rows(tx.simple_query(sql).map_err(|e| run_err(k, &e))?);
-            out.push(Outcome {
-                tag: tag(sql, n),
-                columns: vec![],
-                rows: vec![],
-                more: false,
-            });
+            out.push(Outcome { tag: tag(sql, n), columns: vec![], rows: vec![], more: false });
             continue;
         }
         let columns: Vec<ResultCol> = prepared
@@ -968,8 +945,7 @@ fn run_in_tx(
                 let msgs = tx
                     .simple_query(&format!("FETCH FORWARD {} FROM zpg_cursor", max_rows + 1))
                     .map_err(|e| run_err(k, &e))?;
-                tx.batch_execute("CLOSE zpg_cursor; RELEASE SAVEPOINT zpg_run")
-                    .map_err(|e| run_err(k, &e))?;
+                tx.batch_execute("CLOSE zpg_cursor; RELEASE SAVEPOINT zpg_run").map_err(|e| run_err(k, &e))?;
                 simple_rows(msgs).0
             }
             Err(_) => {
@@ -1020,19 +996,13 @@ pub fn edit_source(c: &mut Client, cols: &[ResultCol]) -> Option<EditSource> {
         )
         .ok()??;
     let names: HashMap<i16, String> = tx
-        .query(
-            "SELECT attnum, attname::text FROM pg_attribute WHERE attrelid = $1 AND attnum > 0",
-            &[&oid],
-        )
+        .query("SELECT attnum, attname::text FROM pg_attribute WHERE attrelid = $1 AND attnum > 0", &[&oid])
         .ok()?
         .iter()
         .map(|r| (r.get(0), r.get(1)))
         .collect();
     let pk: Vec<i16> = tx
-        .query(
-            "SELECT unnest(indkey::int2[]) FROM pg_index WHERE indrelid = $1 AND indisprimary",
-            &[&oid],
-        )
+        .query("SELECT unnest(indkey::int2[]) FROM pg_index WHERE indrelid = $1 AND indisprimary", &[&oid])
         .ok()?
         .iter()
         .map(|r| r.get(0))
@@ -1055,11 +1025,7 @@ pub fn edit_source(c: &mut Client, cols: &[ResultCol]) -> Option<EditSource> {
             columns.push(n.clone());
         }
     }
-    Some(EditSource {
-        table: QualName::new(rel.get::<_, String>(0), rel.get::<_, String>(1)),
-        pk,
-        columns,
-    })
+    Some(EditSource { table: QualName::new(rel.get::<_, String>(0), rel.get::<_, String>(1)), pk, columns })
 }
 
 #[cfg(test)]

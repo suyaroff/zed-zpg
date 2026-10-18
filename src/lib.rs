@@ -51,10 +51,7 @@ impl ZpgExtension {
         zed::set_language_server_installation_status(id, &LanguageServerInstallationStatus::CheckingForUpdate);
         let release = match zed::latest_github_release(
             REPO,
-            zed::GithubReleaseOptions {
-                require_assets: true,
-                pre_release: false,
-            },
+            zed::GithubReleaseOptions { require_assets: true, pre_release: false },
         ) {
             Ok(r) => r,
             Err(e) => return any_downloaded(exe).ok_or(e),

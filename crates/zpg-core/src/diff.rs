@@ -15,10 +15,19 @@ use crate::{Issue, Snapshot};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Op {
-    Update { line: u32, row: usize, sets: Vec<(usize, Value)> },
+    Update {
+        line: u32,
+        row: usize,
+        sets: Vec<(usize, Value)>,
+    },
     /// One value per column; `Plus` is already turned into `Default`.
-    Insert { line: u32, values: Vec<Value> },
-    Delete { row: usize },
+    Insert {
+        line: u32,
+        values: Vec<Value>,
+    },
+    Delete {
+        row: usize,
+    },
 }
 
 impl Op {
@@ -81,11 +90,7 @@ pub fn diff(parsed: &Parsed, snap: &Snapshot) -> Diff {
     let ncells = shown.len();
     let widths = snap.widths();
     // Cell index of each key column.
-    let key_cells: Vec<usize> = snap
-        .pk
-        .iter()
-        .filter_map(|k| shown.iter().position(|c| c == k))
-        .collect();
+    let key_cells: Vec<usize> = snap.pk.iter().filter_map(|k| shown.iter().position(|c| c == k)).collect();
 
     if let Some(cols) = &parsed.columns {
         let names: Vec<Value> = cols.cells.iter().map(|c| cell::parse(&c.text).unwrap_or(Value::Null)).collect();
@@ -204,18 +209,12 @@ pub fn diff(parsed: &Parsed, snap: &Snapshot) -> Diff {
                     d.order.push(Source::Snapshot(i));
                 } else {
                     d.order.push(Source::Op(d.ops.len()));
-                    d.ops.push(Op::Update {
-                        line: row.line,
-                        row: i,
-                        sets,
-                    });
+                    d.ops.push(Op::Update { line: row.line, row: i, sets });
                 }
             }
             None => {
-                let values: Vec<Value> = values
-                    .into_iter()
-                    .map(|v| if v == Value::Plus { Value::Default } else { v })
-                    .collect();
+                let values: Vec<Value> =
+                    values.into_iter().map(|v| if v == Value::Plus { Value::Default } else { v }).collect();
                 for (c, &j) in row.cells.iter().zip(&shown) {
                     if snap.columns[j].generated && values[j] != Value::Default {
                         d.issues.push(cell_issue(row.line, c, "generated column: only DEFAULT can be written"));
@@ -257,12 +256,7 @@ mod tests {
     use crate::{Column, SnapRow, table};
 
     fn col(name: &str, has_default: bool) -> Column {
-        Column {
-            name: name.into(),
-            type_name: "text".into(),
-            has_default,
-            ..Default::default()
-        }
+        Column { name: name.into(), type_name: "text".into(), has_default, ..Default::default() }
     }
 
     fn snap() -> Snapshot {
@@ -298,29 +292,16 @@ mod tests {
     #[test]
     fn update_insert_delete() {
         let s = snap();
-        let text = s
-            .render()
-            .replace("| 1  | a          |", "| 1 | b |")
-            .replace("| 2  | NULL       |\n", "")
+        let text = s.render().replace("| 1  | a          |", "| 1 | b |").replace("| 2  | NULL       |\n", "")
             + "| +  | new |\n| 9 | NULL |\n";
         let d = diff(&table::parse(&text), &s);
         assert!(d.issues.is_empty(), "{:?}", d.issues);
         assert_eq!(
             d.ops,
             vec![
-                Op::Update {
-                    line: 3,
-                    row: 0,
-                    sets: vec![(1, Value::Text("b".into()))]
-                },
-                Op::Insert {
-                    line: 5,
-                    values: vec![Value::Default, Value::Text("new".into())]
-                },
-                Op::Insert {
-                    line: 6,
-                    values: vec![Value::Text("9".into()), Value::Null]
-                },
+                Op::Update { line: 3, row: 0, sets: vec![(1, Value::Text("b".into()))] },
+                Op::Insert { line: 5, values: vec![Value::Default, Value::Text("new".into())] },
+                Op::Insert { line: 6, values: vec![Value::Text("9".into()), Value::Null] },
                 Op::Delete { row: 1 },
             ]
         );
@@ -363,15 +344,8 @@ mod tests {
         assert_eq!(
             d.ops,
             vec![
-                Op::Update {
-                    line: 3,
-                    row: 0,
-                    sets: vec![(1, Value::Text("b".into()))]
-                },
-                Op::Insert {
-                    line: 6,
-                    values: vec![Value::Default, Value::Text("new".into()), Value::Default]
-                },
+                Op::Update { line: 3, row: 0, sets: vec![(1, Value::Text("b".into()))] },
+                Op::Insert { line: 6, values: vec![Value::Default, Value::Text("new".into()), Value::Default] },
             ]
         );
     }

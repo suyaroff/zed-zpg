@@ -13,14 +13,21 @@ pub const DEFAULT_SCHEMA: &str = "public";
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Tok {
     /// Unquoted names are folded to lower case.
-    Ident { name: String, quoted: bool },
+    Ident {
+        name: String,
+        quoted: bool,
+    },
     Dot,
     Comma,
     Open,
     Close,
     /// A string literal; `closed` is false when it runs to the end of the text.
-    Str { closed: bool },
-    Comment { closed: bool },
+    Str {
+        closed: bool,
+    },
+    Comment {
+        closed: bool,
+    },
     Other,
 }
 
@@ -153,10 +160,7 @@ fn tokens(sql: &str) -> Vec<Token> {
                 while i < b.len() && ident_byte(b[i]) {
                     i += 1;
                 }
-                Tok::Ident {
-                    name: sql[start..i].to_lowercase(),
-                    quoted: false,
-                }
+                Tok::Ident { name: sql[start..i].to_lowercase(), quoted: false }
             }
             _ => {
                 i += 1;
@@ -175,9 +179,40 @@ fn code(sql: &str) -> Vec<Token> {
 
 /// Words after which a name can't be an alias.
 const NOT_ALIAS: &[&str] = &[
-    "where", "join", "inner", "left", "right", "full", "cross", "outer", "natural", "on", "using", "group", "order",
-    "having", "limit", "offset", "fetch", "for", "window", "union", "except", "intersect", "returning", "set",
-    "values", "select", "lateral", "when", "then", "and", "or", "default", "do", "tablesample",
+    "where",
+    "join",
+    "inner",
+    "left",
+    "right",
+    "full",
+    "cross",
+    "outer",
+    "natural",
+    "on",
+    "using",
+    "group",
+    "order",
+    "having",
+    "limit",
+    "offset",
+    "fetch",
+    "for",
+    "window",
+    "union",
+    "except",
+    "intersect",
+    "returning",
+    "set",
+    "values",
+    "select",
+    "lateral",
+    "when",
+    "then",
+    "and",
+    "or",
+    "default",
+    "do",
+    "tablesample",
 ];
 
 /// A table named in a statement.
@@ -242,11 +277,7 @@ pub fn tables_in(sql: &str) -> Vec<TableRef> {
             if !call {
                 let mut parts = parts;
                 let name = parts.pop().unwrap_or_default();
-                out.push(TableRef {
-                    schema: parts.pop(),
-                    name,
-                    alias,
-                });
+                out.push(TableRef { schema: parts.pop(), name, alias });
             }
             if from && toks.get(i).is_some_and(|t| t.tok == Tok::Comma) {
                 i += 1;
@@ -345,11 +376,16 @@ pub fn danger(stmt: &str) -> Option<String> {
         Some(t) if t.is_word(&["with"]) => return with_danger(stmt, &toks),
         _ => {}
     }
-    let words: Vec<&str> = toks.iter().filter_map(|t| t.ident().filter(|_| !matches!(t.tok, Tok::Ident { quoted: true, .. }))).collect();
+    let words: Vec<&str> =
+        toks.iter().filter_map(|t| t.ident().filter(|_| !matches!(t.tok, Tok::Ident { quoted: true, .. }))).collect();
     let target = || {
         tables_in(stmt)
             .first()
-            .map(|r| r.schema.as_ref().map_or(display_ident(&r.name), |s| format!("{}.{}", display_ident(s), display_ident(&r.name))))
+            .map(|r| {
+                r.schema
+                    .as_ref()
+                    .map_or(display_ident(&r.name), |s| format!("{}.{}", display_ident(s), display_ident(&r.name)))
+            })
             .unwrap_or_else(|| "the table".into())
     };
     // `WHERE` of the statement itself, not of a subquery.
@@ -503,10 +539,52 @@ pub enum Target<'a> {
 }
 
 pub const KEYWORDS: &[&str] = &[
-    "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "NULL", "IS", "IN", "LIKE", "ILIKE", "BETWEEN", "EXISTS", "JOIN",
-    "LEFT JOIN", "INNER JOIN", "ON", "USING", "GROUP BY", "ORDER BY", "HAVING", "LIMIT", "OFFSET", "DISTINCT", "AS",
-    "CASE", "WHEN", "THEN", "ELSE", "END", "UNION ALL", "ASC", "DESC", "WITH", "INSERT INTO", "VALUES", "UPDATE",
-    "SET", "DELETE FROM", "RETURNING", "DEFAULT", "TRUE", "FALSE", "COUNT", "EXPLAIN", "ANALYZE",
+    "SELECT",
+    "FROM",
+    "WHERE",
+    "AND",
+    "OR",
+    "NOT",
+    "NULL",
+    "IS",
+    "IN",
+    "LIKE",
+    "ILIKE",
+    "BETWEEN",
+    "EXISTS",
+    "JOIN",
+    "LEFT JOIN",
+    "INNER JOIN",
+    "ON",
+    "USING",
+    "GROUP BY",
+    "ORDER BY",
+    "HAVING",
+    "LIMIT",
+    "OFFSET",
+    "DISTINCT",
+    "AS",
+    "CASE",
+    "WHEN",
+    "THEN",
+    "ELSE",
+    "END",
+    "UNION ALL",
+    "ASC",
+    "DESC",
+    "WITH",
+    "INSERT INTO",
+    "VALUES",
+    "UPDATE",
+    "SET",
+    "DELETE FROM",
+    "RETURNING",
+    "DEFAULT",
+    "TRUE",
+    "FALSE",
+    "COUNT",
+    "EXPLAIN",
+    "ANALYZE",
 ];
 
 /// After these only a table name fits.
@@ -531,10 +609,7 @@ impl Schema {
 
     /// The table `q` stands for in a statement naming `refs`: an alias, a table name, or a known table.
     fn qualifier_table(&self, refs: &[TableRef], q: &str) -> Option<&SchemaTable> {
-        let r = refs
-            .iter()
-            .find(|r| r.alias.as_deref() == Some(q))
-            .or_else(|| refs.iter().find(|r| r.name == q));
+        let r = refs.iter().find(|r| r.alias.as_deref() == Some(q)).or_else(|| refs.iter().find(|r| r.name == q));
         match r {
             Some(r) => self.table(r.schema.as_deref(), &r.name),
             None => self.table(None, q),
@@ -575,7 +650,9 @@ impl Schema {
             [q] => {
                 let is_alias = refs.iter().any(|r| r.alias.as_deref() == Some(q.as_str()));
                 if !is_alias && self.schemas().contains(&q.as_str()) {
-                    out.extend(self.tables.iter().filter(|t| &t.rel.name.schema == q).map(|t| Candidate::Table(t, false)));
+                    out.extend(
+                        self.tables.iter().filter(|t| &t.rel.name.schema == q).map(|t| Candidate::Table(t, false)),
+                    );
                 }
                 if let Some(t) = self.qualifier_table(&refs, q) {
                     out.extend(t.columns.iter().map(|col| Candidate::Column(t, col)));
@@ -596,7 +673,8 @@ impl Schema {
         let (parts, at) = name_at(sql, offset)?;
         let refs = tables_in(sql);
         // An alias or an unqualified table name of the statement.
-        let in_refs = |q: &str| refs.iter().any(|r| r.alias.as_deref() == Some(q) || (r.name == q && r.schema.is_none()));
+        let in_refs =
+            |q: &str| refs.iter().any(|r| r.alias.as_deref() == Some(q) || (r.name == q && r.schema.is_none()));
         match (parts.as_slice(), at) {
             ([n], 0) if in_refs(n) => self.qualifier_table(&refs, n).map(Target::Table),
             ([n], 0) => self
@@ -605,10 +683,9 @@ impl Schema {
                 .find_map(|t| column_of(t, n))
                 .or_else(|| self.table(None, n).map(Target::Table)),
             ([q, n], 1) if in_refs(q) => self.qualifier_table(&refs, q).and_then(|t| column_of(t, n)),
-            ([q, n], 1) => self
-                .table(Some(q), n)
-                .map(Target::Table)
-                .or_else(|| self.table(None, q).and_then(|t| column_of(t, n))),
+            ([q, n], 1) => {
+                self.table(Some(q), n).map(Target::Table).or_else(|| self.table(None, q).and_then(|t| column_of(t, n)))
+            }
             ([q, _], 0) if in_refs(q) || !self.schemas().contains(&q.as_str()) => {
                 self.qualifier_table(&refs, q).map(Target::Table)
             }
@@ -629,36 +706,19 @@ mod tests {
     use crate::header::QualName;
 
     fn rel(schema: &str, name: &str) -> Relation {
-        Relation {
-            name: QualName::new(schema, name),
-            kind: "table".into(),
-            rows: None,
-        }
+        Relation { name: QualName::new(schema, name), kind: "table".into(), rows: None }
     }
 
     fn col(name: &str) -> Column {
-        Column {
-            name: name.into(),
-            type_name: "text".into(),
-            ..Default::default()
-        }
+        Column { name: name.into(), type_name: "text".into(), ..Default::default() }
     }
 
     fn schema() -> Schema {
         Schema {
             tables: vec![
-                SchemaTable {
-                    rel: rel("public", "users"),
-                    columns: vec![col("id"), col("name")],
-                },
-                SchemaTable {
-                    rel: rel("public", "orders"),
-                    columns: vec![col("id"), col("user_id")],
-                },
-                SchemaTable {
-                    rel: rel("audit", "log"),
-                    columns: vec![col("at")],
-                },
+                SchemaTable { rel: rel("public", "users"), columns: vec![col("id"), col("name")] },
+                SchemaTable { rel: rel("public", "orders"), columns: vec![col("id"), col("user_id")] },
+                SchemaTable { rel: rel("audit", "log"), columns: vec![col("at")] },
             ],
         }
     }
@@ -696,7 +756,10 @@ mod tests {
 
     #[test]
     fn dangerous_statements() {
-        assert_eq!(danger("update users set a = 1").as_deref(), Some("UPDATE without WHERE changes every row of users"));
+        assert_eq!(
+            danger("update users set a = 1").as_deref(),
+            Some("UPDATE without WHERE changes every row of users")
+        );
         assert_eq!(danger("update users set a = 1 where id = 2"), None);
         assert!(danger("update t set a = (select b from c where c.id = t.id)").is_some());
         assert!(danger("DELETE FROM audit.log").unwrap().ends_with("of audit.log"));
@@ -769,7 +832,9 @@ mod tests {
         let s = schema();
         let at = |sql: &str, word: &str| s.resolve(sql, sql.find(word).unwrap() + 1);
         let sql = "select u.name, id from users u join audit.log l on true";
-        assert!(matches!(at(sql, "name"), Some(Target::Column(t, c)) if t.rel.name.name == "users" && c.name == "name"));
+        assert!(
+            matches!(at(sql, "name"), Some(Target::Column(t, c)) if t.rel.name.name == "users" && c.name == "name")
+        );
         assert!(matches!(at(sql, "users"), Some(Target::Table(t)) if t.rel.name.name == "users"));
         assert!(matches!(at(sql, "log"), Some(Target::Table(t)) if t.rel.name.schema == "audit"));
         assert!(matches!(at(sql, "id"), Some(Target::Column(t, _)) if t.rel.name.name == "users"));

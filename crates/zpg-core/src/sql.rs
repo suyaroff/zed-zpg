@@ -59,11 +59,7 @@ impl Builder {
 
 /// ` WHERE (<filter>)`, or nothing without a filter.
 fn filter_clause(q: &Query) -> String {
-    if q.filter.trim().is_empty() {
-        String::new()
-    } else {
-        format!(" WHERE ({})", q.filter)
-    }
+    if q.filter.trim().is_empty() { String::new() } else { format!(" WHERE ({})", q.filter) }
 }
 
 /// ` ORDER BY` the header's `order`, else the key.
@@ -130,10 +126,7 @@ pub fn select_row(snap: &Snapshot, key: &[Option<String>], pretty: bool) -> Stmt
             format!("{} = {}", quote_ident(&c.name), b.cast(&Value::from_db(v.as_deref()), &c.type_name))
         })
         .collect();
-    Stmt {
-        sql: format!("SELECT {cols} FROM {} WHERE {}", snap.table.sql(), cond.join(" AND ")),
-        params: b.params,
-    }
+    Stmt { sql: format!("SELECT {cols} FROM {} WHERE {}", snap.table.sql(), cond.join(" AND ")), params: b.params }
 }
 
 pub fn for_op(snap: &Snapshot, op: &Op) -> Stmt {
@@ -163,11 +156,7 @@ pub fn for_op(snap: &Snapshot, op: &Op) -> Stmt {
             if cols.is_empty() {
                 format!("INSERT INTO {table} DEFAULT VALUES RETURNING {ret}")
             } else {
-                format!(
-                    "INSERT INTO {table} ({}) VALUES ({}) RETURNING {ret}",
-                    cols.join(", "),
-                    vals.join(", ")
-                )
+                format!("INSERT INTO {table} ({}) VALUES ({}) RETURNING {ret}", cols.join(", "), vals.join(", "))
             }
         }
         Op::Delete { row } => {
@@ -198,11 +187,7 @@ mod tests {
     use crate::{Column, SnapRow};
 
     fn snap() -> Snapshot {
-        let col = |n: &str, t: &str| Column {
-            name: n.into(),
-            type_name: t.into(),
-            ..Default::default()
-        };
+        let col = |n: &str, t: &str| Column { name: n.into(), type_name: t.into(), ..Default::default() };
         Snapshot {
             conn: "c".into(),
             table: QualName::new("public", "T"),
@@ -212,19 +197,11 @@ mod tests {
             referenced_by: vec![],
             total: None,
             read_only: None,
-            query: Query {
-                page: 2,
-                limit: 10,
-                filter: String::new(),
-                order: String::new(),
-            },
+            query: Query { page: 2, limit: 10, filter: String::new(), order: String::new() },
             width: 40,
             apply: Apply::Save,
             visible: vec![],
-            rows: vec![SnapRow {
-                xmin: Some("77".into()),
-                values: vec![Some("5".into()), Some("x".into())],
-            }],
+            rows: vec![SnapRow { xmin: Some("77".into()), values: vec![Some("5".into()), Some("x".into())] }],
         }
     }
 
@@ -235,27 +212,14 @@ mod tests {
             select_page(&s, true, &s.query).sql,
             r#"SELECT xmin::text, "id"::text, "na""me"::text FROM "public"."T" ORDER BY "id" LIMIT 10 OFFSET 10"#
         );
-        let up = for_op(
-            &s,
-            &Op::Update {
-                line: 3,
-                row: 0,
-                sets: vec![(1, Value::Text("it's".into()))],
-            },
-        );
+        let up = for_op(&s, &Op::Update { line: 3, row: 0, sets: vec![(1, Value::Text("it's".into()))] });
         assert_eq!(
             up.sql,
             r#"UPDATE "public"."T" SET "na""me" = CAST($1::text AS text) WHERE "id" = CAST($2::text AS integer) AND xmin = CAST($3::text AS xid) RETURNING xmin::text, "id"::text, "na""me"::text"#
         );
         assert_eq!(up.params, vec![Some("it's".into()), Some("5".into()), Some("77".into())]);
         assert!(inline(&up).contains("CAST('it''s' AS text)"));
-        let ins = for_op(
-            &s,
-            &Op::Insert {
-                line: 4,
-                values: vec![Value::Default, Value::Null],
-            },
-        );
+        let ins = for_op(&s, &Op::Insert { line: 4, values: vec![Value::Default, Value::Null] });
         assert_eq!(
             ins.sql,
             r#"INSERT INTO "public"."T" ("na""me") VALUES (NULL) RETURNING xmin::text, "id"::text, "na""me"::text"#

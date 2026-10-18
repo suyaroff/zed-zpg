@@ -68,10 +68,7 @@ fn run(cli: Cli) -> Result<(), String> {
 }
 
 fn open_in_zed(zed: &str, path: &Path) -> Result<(), String> {
-    let status = Command::new(zed)
-        .arg(path)
-        .status()
-        .map_err(|e| format!("failed to launch `{zed}`: {e}"))?;
+    let status = Command::new(zed).arg(path).status().map_err(|e| format!("failed to launch `{zed}`: {e}"))?;
     if !status.success() {
         return Err(format!("`{zed}` exited with {status}"));
     }

@@ -82,11 +82,8 @@ fn intercept(msg: &Message, running: &Shared) -> Option<Option<Message>> {
     let conn = running.lock().ok()?.as_ref().map(|r| (r.what.clone(), r.token.clone()))?;
     match msg {
         Message::Request(Request { id, method, .. }) if method == CodeActionRequest::METHOD => {
-            let action = CodeActionOrCommand::Command(Command::new(
-                format!("zpg: Cancel {}", conn.0),
-                CMD_CANCEL.into(),
-                None,
-            ));
+            let action =
+                CodeActionOrCommand::Command(Command::new(format!("zpg: Cancel {}", conn.0), CMD_CANCEL.into(), None));
             Some(Some(Response::new_ok(id.clone(), vec![action]).into()))
         }
         Message::Request(Request { id, method, params })
@@ -156,11 +153,7 @@ impl Server {
 
     fn set_running(&mut self, stop: Stop, what: String, token: &NumberOrString) {
         if let (Ok(mut r), NumberOrString::String(t)) = (self.running.lock(), token) {
-            *r = Some(Running {
-                stop,
-                what,
-                token: t.clone(),
-            });
+            *r = Some(Running { stop, what, token: t.clone() });
         }
     }
 

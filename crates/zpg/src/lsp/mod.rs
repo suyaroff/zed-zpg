@@ -15,13 +15,12 @@ use std::time::{Instant, SystemTime};
 
 use lsp_server::{Connection, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::{
-    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument,
-    DidSaveTextDocument, Notification as _, PublishDiagnostics, ShowMessage,
+    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument, Notification as _,
+    PublishDiagnostics, ShowMessage,
 };
 use lsp_types::request::{
     ApplyWorkspaceEdit, CodeActionRequest, CodeLensRequest, Completion, ExecuteCommand, Formatting, GotoDefinition,
-    HoverRequest,
-    Request as _, SemanticTokensFullRequest, SemanticTokensRefresh, ShowDocument,
+    HoverRequest, Request as _, SemanticTokensFullRequest, SemanticTokensRefresh, ShowDocument,
 };
 use lsp_types::{
     ApplyWorkspaceEditParams, CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionProviderCapability,
@@ -30,9 +29,9 @@ use lsp_types::{
     Location, MarkupContent, MarkupKind, MessageType, OneOf, OptionalVersionedTextDocumentIdentifier, Position,
     PublishDiagnosticsParams, Range, SaveOptions, SemanticToken, SemanticTokenType, SemanticTokens,
     SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions, SemanticTokensResult,
-    SemanticTokensServerCapabilities, ServerCapabilities, ShowDocumentParams, ShowMessageParams,
-    TextDocumentEdit, TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-    TextDocumentSyncSaveOptions, TextEdit, Uri, WorkspaceEdit,
+    SemanticTokensServerCapabilities, ServerCapabilities, ShowDocumentParams, ShowMessageParams, TextDocumentEdit,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit,
+    Uri, WorkspaceEdit,
 };
 use serde_json::Value;
 use zpg_core::catalog::{self, Section};
@@ -125,9 +124,7 @@ impl Doc {
 
     /// True when the buffer has no unsaved edits.
     fn is_clean(&self) -> bool {
-        self.path()
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .is_some_and(|t| t == self.text)
+        self.path().and_then(|p| std::fs::read_to_string(p).ok()).is_some_and(|t| t == self.text)
     }
 }
 
@@ -178,9 +175,7 @@ pub fn run() -> Res<()> {
         text_document_sync: Some(TextDocumentSyncCapability::Options(TextDocumentSyncOptions {
             open_close: Some(true),
             change: Some(TextDocumentSyncKind::FULL),
-            save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
-                include_text: Some(false),
-            })),
+            save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions { include_text: Some(false) })),
             ..Default::default()
         })),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
@@ -202,9 +197,7 @@ pub fn run() -> Res<()> {
             },
         )),
         code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
-        code_lens_provider: Some(CodeLensOptions {
-            resolve_provider: Some(false),
-        }),
+        code_lens_provider: Some(CodeLensOptions { resolve_provider: Some(false) }),
         execute_command_provider: Some(ExecuteCommandOptions {
             commands: [
                 CMD_REFRESH,
@@ -229,8 +222,8 @@ pub fn run() -> Res<()> {
                 CMD_SIGNAL,
                 CMD_BACKUP,
             ]
-                .map(String::from)
-                .to_vec(),
+            .map(String::from)
+            .to_vec(),
             ..Default::default()
         }),
         ..Default::default()
@@ -255,11 +248,7 @@ pub fn run() -> Res<()> {
             code_lens_refresh: ws.code_lens.and_then(|c| c.refresh_support).unwrap_or(false),
             message_actions: init.capabilities.window.as_ref().is_some_and(|w| w.show_message.is_some()),
             progress: init.capabilities.window.as_ref().and_then(|w| w.work_done_progress).unwrap_or(false),
-            show_document: init
-                .capabilities
-                .window
-                .and_then(|w| w.show_document)
-                .is_some_and(|s| s.support),
+            show_document: init.capabilities.window.and_then(|w| w.show_document).is_some_and(|s| s.support),
         },
         ..Default::default()
     };
@@ -358,8 +347,7 @@ fn row_file(key: &[Option<String>]) -> String {
 
 /// FNV-1a: stable across builds and runs, unlike std's hasher.
 fn fnv(text: &str) -> u64 {
-    text.bytes()
-        .fold(0xcbf29ce484222325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100000001b3))
+    text.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100000001b3))
 }
 
 /// `.zpg/<conn>/schema.table.pgt` -> `.zpg/<conn>/schema.table.rows/`
@@ -373,13 +361,7 @@ fn table_of_row(row_path: &Path) -> Option<PathBuf> {
 }
 
 fn markdown_hover(md: String) -> Hover {
-    Hover {
-        contents: HoverContents::Markup(MarkupContent {
-            kind: MarkupKind::Markdown,
-            value: md,
-        }),
-        range: None,
-    }
+    Hover { contents: HoverContents::Markup(MarkupContent { kind: MarkupKind::Markdown, value: md }), range: None }
 }
 
 fn notify<N: lsp_types::notification::Notification>(conn: &Connection, params: N::Params) -> Res<()> {
@@ -409,10 +391,7 @@ fn edit_action(title: String, kind: CodeActionKind, uri: &Uri, edits: Vec<TextEd
     CodeActionOrCommand::CodeAction(CodeAction {
         title,
         kind: Some(kind),
-        edit: Some(WorkspaceEdit {
-            changes: Some(HashMap::from([(uri.clone(), edits)])),
-            ..Default::default()
-        }),
+        edit: Some(WorkspaceEdit { changes: Some(HashMap::from([(uri.clone(), edits)])), ..Default::default() }),
         ..Default::default()
     })
 }
@@ -542,11 +521,8 @@ impl Server {
             DidOpenTextDocument::METHOD => {
                 let p: lsp_types::DidOpenTextDocumentParams = serde_json::from_value(n.params)?;
                 let key = p.text_document.uri.as_str().to_string();
-                let doc = Doc {
-                    uri: p.text_document.uri,
-                    text: p.text_document.text,
-                    version: p.text_document.version,
-                };
+                let doc =
+                    Doc { uri: p.text_document.uri, text: p.text_document.text, version: p.text_document.version };
                 let kind = doc.kind();
                 self.docs.insert(key.clone(), doc);
                 match kind {
@@ -645,10 +621,7 @@ impl Server {
             SemanticTokensFullRequest::METHOD => {
                 let p: lsp_types::SemanticTokensParams = serde_json::from_value(req.params)?;
                 let data = self.semantic_tokens(p.text_document.uri.as_str());
-                Ok(serde_json::to_value(SemanticTokensResult::Tokens(SemanticTokens {
-                    result_id: None,
-                    data,
-                }))?)
+                Ok(serde_json::to_value(SemanticTokensResult::Tokens(SemanticTokens { result_id: None, data }))?)
             }
             CodeLensRequest::METHOD => {
                 let p: lsp_types::CodeLensParams = serde_json::from_value(req.params)?;
@@ -761,21 +734,13 @@ impl Server {
         let uri = path_to_uri(path)?;
         self.send_request::<ShowDocument>(
             conn,
-            ShowDocumentParams {
-                uri,
-                external: None,
-                take_focus: Some(true),
-                selection: None,
-            },
+            ShowDocumentParams { uri, external: None, take_focus: Some(true), selection: None },
         )?;
         Ok(())
     }
 
     fn doc_key(&self, path: &Path) -> Option<String> {
-        self.docs
-            .iter()
-            .find(|(_, d)| d.path().as_deref() == Some(path))
-            .map(|(k, _)| k.clone())
+        self.docs.iter().find(|(_, d)| d.path().as_deref() == Some(path)).map(|(k, _)| k.clone())
     }
 
     /// Puts `text` into the buffer: on disk when it has no unsaved edits (Zed
@@ -810,17 +775,11 @@ impl Server {
                 ..Default::default()
             }
         } else {
-            WorkspaceEdit {
-                changes: Some(HashMap::from([(doc.uri.clone(), edits)])),
-                ..Default::default()
-            }
+            WorkspaceEdit { changes: Some(HashMap::from([(doc.uri.clone(), edits)])), ..Default::default() }
         };
         self.send_request::<ApplyWorkspaceEdit>(
             conn,
-            ApplyWorkspaceEditParams {
-                label: Some("zpg: reload".into()),
-                edit,
-            },
+            ApplyWorkspaceEditParams { label: Some("zpg: reload".into()), edit },
         )?;
         Ok(())
     }
@@ -871,12 +830,8 @@ impl Server {
 
     /// Re-reads every open catalog.
     fn refresh_catalogs(&mut self, conn: &Connection) -> Res<()> {
-        let keys: Vec<String> = self
-            .docs
-            .iter()
-            .filter(|(_, d)| d.kind() == Kind::Catalog)
-            .map(|(k, _)| k.clone())
-            .collect();
+        let keys: Vec<String> =
+            self.docs.iter().filter(|(_, d)| d.kind() == Kind::Catalog).map(|(k, _)| k.clone()).collect();
         for key in keys {
             self.refresh_catalog(conn, &key)?;
         }
@@ -987,7 +942,13 @@ impl Server {
     }
 
     /// Opens the referenced table filtered to the referenced row.
-    fn follow_fk(&mut self, from: &Path, snap: &Snapshot, fk: &ForeignKey, values: &[String]) -> Result<PathBuf, String> {
+    fn follow_fk(
+        &mut self,
+        from: &Path,
+        snap: &Snapshot,
+        fk: &ForeignKey,
+        values: &[String],
+    ) -> Result<PathBuf, String> {
         self.open_filtered(from, &snap.conn, &fk.table, &fk.ref_columns, values)
     }
 
@@ -1036,11 +997,7 @@ impl Server {
         columns: &[String],
         values: &[String],
     ) -> Result<PathBuf, String> {
-        let root = from
-            .parent()
-            .and_then(Path::parent)
-            .ok_or("table file is not inside .zpg/<conn>/")?
-            .to_path_buf();
+        let root = from.parent().and_then(Path::parent).ok_or("table file is not inside .zpg/<conn>/")?.to_path_buf();
         let path = self.open_table(&root, conn, table)?;
         if self.has_local_edits(&path) {
             return Ok(path);
@@ -1054,11 +1011,7 @@ impl Server {
             .map(|(c, v)| format!("{} = {}", display_ident(c), quote_literal(v)))
             .collect::<Vec<_>>()
             .join(" AND ");
-        let query = Query {
-            page: 1,
-            filter,
-            ..target.query.clone()
-        };
+        let query = Query { page: 1, filter, ..target.query.clone() };
         let d = self.defaults(&target.conn, query, target.width, target.apply, target.visible.clone());
         let loaded = self.load_table(&path, &target.conn, &target.table, &d)?;
         self.pending_writes.push((path.clone(), loaded.render()));
@@ -1092,11 +1045,7 @@ impl Server {
         }
         let client = self.db.client(&self.settings, &snap.conn)?;
         let fetched = db::fetch_row(client, snap, &key, true)?.ok_or("the row no longer exists; refresh the table")?;
-        let row_snap = Snapshot {
-            rows: vec![fetched],
-            width: 0,
-            ..snap.clone()
-        };
+        let row_snap = Snapshot { rows: vec![fetched], width: 0, ..snap.clone() };
         let label = snap
             .pk
             .iter()
@@ -1191,19 +1140,13 @@ impl Server {
         let label = record::RowHeader::parse(self.docs[key].text.lines().next().unwrap_or(""))
             .map(|h| h.key)
             .unwrap_or_default();
-        let fetched = match self
-            .db
-            .client(&self.settings, &snap.conn)
-            .and_then(|c| db::fetch_row(c, &snap, &key_values, true))
-        {
-            Ok(Some(r)) => r,
-            Ok(None) => return show(conn, MessageType::WARNING, "zpg: the row no longer exists".into()),
-            Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),
-        };
-        let new = Snapshot {
-            rows: vec![fetched],
-            ..snap
-        };
+        let fetched =
+            match self.db.client(&self.settings, &snap.conn).and_then(|c| db::fetch_row(c, &snap, &key_values, true)) {
+                Ok(Some(r)) => r,
+                Ok(None) => return show(conn, MessageType::WARNING, "zpg: the row no longer exists".into()),
+                Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),
+            };
+        let new = Snapshot { rows: vec![fetched], ..snap };
         let text = record::render(&new, &label);
         self.store(path, new)?;
         self.failed.remove(key);
@@ -1214,16 +1157,20 @@ impl Server {
     /// Records a failed write and reports it.
     fn fail(&mut self, conn: &Connection, key: &str, line: u32, message: &str) -> Res<()> {
         let r = line_range(&self.docs[key].text, line);
-        self.failed.insert(
-            key.to_string(),
-            Issue::error(line, 0, r.end.character.max(1), format!("not saved: {message}")),
-        );
+        self.failed
+            .insert(key.to_string(), Issue::error(line, 0, r.end.character.max(1), format!("not saved: {message}")));
         show(conn, MessageType::ERROR, format!("zpg: nothing written, transaction rolled back: {message}"))?;
         self.publish(conn, key)
     }
 
     /// Runs `d` against the database; `None` after reporting a failure.
-    fn run_diff(&mut self, conn: &Connection, key: &str, snap: &Snapshot, d: &Diff) -> Res<Option<Vec<Option<zpg_core::SnapRow>>>> {
+    fn run_diff(
+        &mut self,
+        conn: &Connection,
+        key: &str,
+        snap: &Snapshot,
+        d: &Diff,
+    ) -> Res<Option<Vec<Option<zpg_core::SnapRow>>>> {
         let client = match self.db.client(&self.settings, &snap.conn) {
             Ok(c) => c,
             Err(e) => {
@@ -1308,10 +1255,7 @@ impl Server {
         new.width = header.width;
         new.visible = header.columns.clone();
         if header.query != snap.query {
-            let fetched = self
-                .db
-                .client(&self.settings, &snap.conn)
-                .and_then(|c| db::fetch(c, &new, &header.query));
+            let fetched = self.db.client(&self.settings, &snap.conn).and_then(|c| db::fetch(c, &new, &header.query));
             match fetched {
                 Ok(rows) => {
                     if header.query.filter != snap.query.filter
@@ -1383,17 +1327,10 @@ impl Server {
             return Ok(());
         };
         let key: Vec<Option<String>> = row_snap.pk.iter().map(|&k| row.values[k].clone()).collect();
-        let Some(i) = table
-            .rows
-            .iter()
-            .position(|r| table.pk.iter().zip(&key).all(|(&k, v)| &r.values[k] == v))
-        else {
+        let Some(i) = table.rows.iter().position(|r| table.pk.iter().zip(&key).all(|(&k, v)| &r.values[k] == v)) else {
             return Ok(());
         };
-        let fetched = self
-            .db
-            .client(&self.settings, &table.conn)
-            .and_then(|c| db::fetch_row(c, &table, &key, false));
+        let fetched = self.db.client(&self.settings, &table.conn).and_then(|c| db::fetch_row(c, &table, &key, false));
         if let Ok(Some(r)) = fetched {
             table.rows[i] = r;
             let text = table.render();
@@ -1428,10 +1365,7 @@ impl Server {
 
     /// The row `fk` points at, as markdown.
     fn referenced_md(&mut self, snap: &Snapshot, fk: &ForeignKey, values: &[String]) -> String {
-        let fetched = self
-            .db
-            .client(&self.settings, &snap.conn)
-            .and_then(|c| db::referenced(c, snap, fk, values));
+        let fetched = self.db.client(&self.settings, &snap.conn).and_then(|c| db::referenced(c, snap, fk, values));
         match fetched {
             Ok(Some(fields)) => {
                 let mut md = format!("\n\n**→ {}** (F12 opens it)\n\n", fk.table);
@@ -1539,7 +1473,8 @@ impl Server {
                 let Some(f) = parsed.field_at(pos.line).filter(|f| f.line == pos.line) else {
                     return vec![];
                 };
-                let range = Range::new(Position::new(pos.line, f.start), Position::new(pos.line, f.end.max(pos.character)));
+                let range =
+                    Range::new(Position::new(pos.line, f.start), Position::new(pos.line, f.end.max(pos.character)));
                 complete::values(snap, f.col, range)
             }
             _ => vec![],
@@ -1642,10 +1577,7 @@ impl Server {
 
         let on_row = self.caps.show_document
             && range.start.line > 0
-            && text
-                .split('\n')
-                .nth(range.start.line as usize)
-                .is_some_and(|line| row_of_line(snap, line).is_some());
+            && text.split('\n').nth(range.start.line as usize).is_some_and(|line| row_of_line(snap, line).is_some());
         if on_row {
             out.push(command("zpg: Open row".into(), CMD_OPEN_ROW, vec![arg(), Value::from(range.start.line)]));
         }
@@ -1658,7 +1590,11 @@ impl Server {
             let current = parsed.header.as_ref().map_or(snap.query.order.clone(), |h| h.query.order.clone());
             for (arrow, order) in [("↑", name.clone()), ("↓", format!("{name} desc"))] {
                 if current.trim() != order {
-                    out.push(command(format!("zpg: Sort by {name} {arrow}"), CMD_SORT, vec![arg(), Value::from(order)]));
+                    out.push(command(
+                        format!("zpg: Sort by {name} {arrow}"),
+                        CMD_SORT,
+                        vec![arg(), Value::from(order)],
+                    ));
                 }
             }
         }
@@ -1712,11 +1648,7 @@ impl Server {
             out.extend(export::actions(key, Kind::Table));
         }
         out.push(command(
-            if pending {
-                "zpg: Refresh (discard changes)".into()
-            } else {
-                "zpg: Refresh".into()
-            },
+            if pending { "zpg: Refresh (discard changes)".into() } else { "zpg: Refresh".into() },
             CMD_REFRESH,
             vec![arg()],
         ));
@@ -1782,7 +1714,8 @@ impl Server {
                             diff::Op::Update { line, sets, .. } => {
                                 if let Some(cells) = cells_of(line) {
                                     for (col, _) in &sets {
-                                        if let Some(c) = shown.iter().position(|s| s == col).and_then(|k| cells.get(k)) {
+                                        if let Some(c) = shown.iter().position(|s| s == col).and_then(|k| cells.get(k))
+                                        {
                                             spans.push((line, c.start, c.end, TOKEN_MODIFIED));
                                         }
                                     }
@@ -2017,10 +1950,7 @@ fn pending(d: &Diff, manual: bool) -> Vec<Issue> {
     let mut out = d.issues.clone();
     if !d.ops.is_empty() && !d.issues.iter().any(|i| i.severity == Severity::Error) {
         let how = if manual { "run the code action “Apply changes”" } else { "save to write them" };
-        out.push(Issue {
-            severity: Severity::Info,
-            ..Issue::header(format!("pending: {}; {how}", d.summary()))
-        });
+        out.push(Issue { severity: Severity::Info, ..Issue::header(format!("pending: {}; {how}", d.summary())) });
     }
     out
 }
@@ -2041,10 +1971,7 @@ fn insert_row(uri: &Uri, parsed: &Parsed, snap: &Snapshot, cursor_line: u32) -> 
         "zpg: Insert row".into(),
         CodeActionKind::REFACTOR,
         uri,
-        vec![TextEdit::new(
-            Range::new(Position::new(after + 1, 0), Position::new(after + 1, 0)),
-            row,
-        )],
+        vec![TextEdit::new(Range::new(Position::new(after + 1, 0), Position::new(after + 1, 0)), row)],
     )
 }
 
@@ -2079,11 +2006,7 @@ mod tests {
     }
 
     fn snap(filter: &str) -> Snapshot {
-        let col = |n: &str| Column {
-            name: n.into(),
-            type_name: "text".into(),
-            ..Default::default()
-        };
+        let col = |n: &str| Column { name: n.into(), type_name: "text".into(), ..Default::default() };
         Snapshot {
             conn: "c".into(),
             table: QualName::new("public", "t"),
@@ -2092,18 +2015,12 @@ mod tests {
             foreign_keys: vec![],
             referenced_by: vec![],
             read_only: None,
-            query: Query {
-                filter: filter.into(),
-                ..Query::first(100)
-            },
+            query: Query { filter: filter.into(), ..Query::first(100) },
             width: 40,
             apply: Apply::Manual,
             visible: vec![],
             total: None,
-            rows: vec![SnapRow {
-                xmin: Some("1".into()),
-                values: vec![Some("1".into()), Some("it's".into())],
-            }],
+            rows: vec![SnapRow { xmin: Some("1".into()), values: vec![Some("1".into()), Some("it's".into())] }],
         }
     }
 
@@ -2128,7 +2045,10 @@ mod tests {
         let f = filters("");
         assert_eq!(f[0], ("zpg: Filter: city = 'it's'".into(), "city = 'it''s'".into()));
         assert_eq!(f[1].1, "city <> 'it''s'");
-        assert_eq!(filters("id > 0")[0], ("zpg: Also filter: city = 'it's'".into(), "id > 0 AND city = 'it''s'".into()));
+        assert_eq!(
+            filters("id > 0")[0],
+            ("zpg: Also filter: city = 'it's'".into(), "id > 0 AND city = 'it''s'".into())
+        );
         assert_eq!(filters("id = 1 or(id = 2)")[0].1, "(id = 1 or(id = 2)) AND city = 'it''s'");
         assert_eq!(filters("note = 'x or y'")[0].1, "note = 'x or y' AND city = 'it''s'");
     }

@@ -36,9 +36,7 @@ impl RowHeader {
     }
 
     pub fn parse(line: &str) -> Result<Self, String> {
-        let rest = line
-            .strip_prefix(ROW_MAGIC)
-            .ok_or_else(|| format!("first line must start with `{ROW_MAGIC}`"))?;
+        let rest = line.strip_prefix(ROW_MAGIC).ok_or_else(|| format!("first line must start with `{ROW_MAGIC}`"))?;
         let (mut conn, mut table, mut key) = (None, None, String::new());
         for (k, v) in parse_pairs(rest, &["conn", "table", "key"])? {
             match k.as_str() {
@@ -48,11 +46,7 @@ impl RowHeader {
                 _ => return Err(format!("unknown header field `{k}`")),
             }
         }
-        Ok(Self {
-            conn: conn.ok_or("header has no `conn`")?,
-            table: table.ok_or("header has no `table`")?,
-            key,
-        })
+        Ok(Self { conn: conn.ok_or("header has no `conn`")?, table: table.ok_or("header has no `table`")?, key })
     }
 }
 
@@ -79,11 +73,7 @@ pub fn render_field(name: &str, v: &Option<String>) -> Vec<String> {
 }
 
 pub fn render(snap: &Snapshot, key: &str) -> String {
-    let header = RowHeader {
-        conn: snap.conn.clone(),
-        table: snap.table.clone(),
-        key: key.to_string(),
-    };
+    let header = RowHeader { conn: snap.conn.clone(), table: snap.table.clone(), key: key.to_string() };
     let mut out = header.render();
     out.push('\n');
     if let Some(row) = snap.rows.first() {
@@ -124,10 +114,7 @@ impl ParsedRow {
     }
 
     pub fn field_at(&self, line: u32) -> Option<&Field> {
-        self.fields
-            .iter()
-            .rev()
-            .find(|f| f.line <= line && line < f.line + f.lines.len() as u32)
+        self.fields.iter().rev().find(|f| f.line <= line && line < f.line + f.lines.len() as u32)
     }
 }
 
@@ -208,12 +195,7 @@ pub fn parse(text: &str, snap: &Snapshot) -> ParsedRow {
     }
     if next_col < snap.columns.len() && p.issues.is_empty() {
         let last = lines.len().saturating_sub(1) as u32;
-        p.issues.push(Issue::error(
-            last,
-            0,
-            1,
-            format!("missing field `{}:`", snap.columns[next_col].name),
-        ));
+        p.issues.push(Issue::error(last, 0, 1, format!("missing field `{}:`", snap.columns[next_col].name)));
     }
     p
 }
@@ -253,11 +235,7 @@ pub fn diff(parsed: &ParsedRow, snap: &Snapshot) -> Diff {
         }
     }
     if !sets.is_empty() {
-        d.ops.push(Op::Update {
-            line: first_line.unwrap_or(0),
-            row: 0,
-            sets,
-        });
+        d.ops.push(Op::Update { line: first_line.unwrap_or(0), row: 0, sets });
         d.order.push(Source::Op(0));
     } else {
         d.order.push(Source::Snapshot(0));
@@ -272,11 +250,7 @@ mod tests {
     use crate::{Column, SnapRow};
 
     fn snap(values: Vec<Option<&str>>) -> Snapshot {
-        let col = |n: &str| Column {
-            name: n.into(),
-            type_name: "text".into(),
-            ..Default::default()
-        };
+        let col = |n: &str| Column { name: n.into(), type_name: "text".into(), ..Default::default() };
         Snapshot {
             conn: "c".into(),
             table: QualName::new("public", "t"),

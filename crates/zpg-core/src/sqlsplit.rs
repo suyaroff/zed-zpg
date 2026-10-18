@@ -246,10 +246,7 @@ mod tests {
     #[test]
     fn splits_on_top_level_semicolons() {
         let text = "-- @conn local\nselect 1;\n\n/* c; */ select 'a;b', \"x;y\" from t;\nselect $$a;b$$, $f$ ; $f$;  \n-- trailing; comment\n";
-        assert_eq!(
-            parts(text),
-            vec!["select 1", "select 'a;b', \"x;y\" from t", "select $$a;b$$, $f$ ; $f$"]
-        );
+        assert_eq!(parts(text), vec!["select 1", "select 'a;b', \"x;y\" from t", "select $$a;b$$, $f$ ; $f$"]);
         assert_eq!(parts("select E'it\\'s;' ; select 'it''s;'"), vec!["select E'it\\'s;'", "select 'it''s;'"]);
         assert_eq!(parts("do $body$ begin perform 1; end $body$"), vec!["do $body$ begin perform 1; end $body$"]);
         assert_eq!(parts("select a$1 from t; select 2"), vec!["select a$1 from t", "select 2"]);

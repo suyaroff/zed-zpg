@@ -49,7 +49,17 @@ fn json_string(s: &str) -> String {
 fn json_value(v: &str, ty: &str) -> String {
     let number = matches!(
         ty,
-        "smallint" | "integer" | "bigint" | "real" | "double precision" | "int2" | "int4" | "int8" | "float4" | "float8" | "oid"
+        "smallint"
+            | "integer"
+            | "bigint"
+            | "real"
+            | "double precision"
+            | "int2"
+            | "int4"
+            | "int8"
+            | "float4"
+            | "float8"
+            | "oid"
     ) || ty.starts_with("numeric");
     match ty {
         "boolean" | "bool" if v == "true" || v == "false" => v.to_string(),
@@ -93,10 +103,8 @@ pub fn inserts(table: &QualName, names: &[String], rows: &[Row]) -> String {
     let mut out = String::new();
     for chunk in rows.chunks(INSERT_BATCH) {
         out += &format!("INSERT INTO {table} ({}) VALUES\n", cols.join(", "));
-        let values: Vec<String> = chunk
-            .iter()
-            .map(|r| format!("  ({})", r.iter().map(literal).collect::<Vec<_>>().join(", ")))
-            .collect();
+        let values: Vec<String> =
+            chunk.iter().map(|r| format!("  ({})", r.iter().map(literal).collect::<Vec<_>>().join(", "))).collect();
         out += &values.join(",\n");
         out += ";\n";
     }

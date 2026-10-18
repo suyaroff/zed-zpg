@@ -6,8 +6,8 @@ use std::time::Instant;
 use lsp_server::Connection;
 use lsp_types::request::ShowMessageRequest;
 use lsp_types::{
-    CodeActionOrCommand, CodeLens, Command, Hover, MessageActionItem,
-    MessageType, Position, Range, ShowMessageRequestParams,
+    CodeActionOrCommand, CodeLens, Command, Hover, MessageActionItem, MessageType, Position, Range,
+    ShowMessageRequestParams,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -64,12 +64,8 @@ pub fn position_to_offset(text: &str, pos: Position) -> usize {
 
 fn result_header(st: &ResultState) -> String {
     let rows = st.snap.rows.len();
-    let mut h = format!(
-        "# zpg v1 result conn={} rows={rows}{} time={}ms",
-        st.conn,
-        if st.more { "+" } else { "" },
-        st.millis
-    );
+    let mut h =
+        format!("# zpg v1 result conn={} rows={rows}{} time={}ms", st.conn, if st.more { "+" } else { "" }, st.millis);
     let first = st.sql.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
     let first: String = first.chars().take(200).collect();
     h += &format!("\n# {first}");
@@ -129,7 +125,11 @@ impl Server {
                 let title = if conns.len() == 1 { format!("▶ Run on {c}") } else { format!("▶ {c}") };
                 out.push(CodeLens {
                     range: Range::new(pos, pos),
-                    command: Some(Command::new(title, CMD_RUN.into(), Some(run_args(&doc.text, key, r.start, r.end, c)))),
+                    command: Some(Command::new(
+                        title,
+                        CMD_RUN.into(),
+                        Some(run_args(&doc.text, key, r.start, r.end, c)),
+                    )),
                     data: None,
                 });
             }
@@ -163,10 +163,8 @@ impl Server {
             }
         }
         let stmts = sqlsplit::split(text);
-        let at = stmts
-            .iter()
-            .find(|r| r.start <= a && a <= r.end + 1)
-            .or_else(|| stmts.iter().rev().find(|r| r.start <= a));
+        let at =
+            stmts.iter().find(|r| r.start <= a && a <= r.end + 1).or_else(|| stmts.iter().rev().find(|r| r.start <= a));
         if let Some(r) = at {
             for c in self.conns_for(&directives, r.start) {
                 out.push(command(
@@ -193,14 +191,7 @@ impl Server {
 
     /// Runs the statements of `target` in the `.sql` buffer `key`.
     pub(super) fn run_sql(&mut self, conn: &Connection, key: &str, target: RunTarget) -> Res<()> {
-        let RunTarget {
-            start,
-            end,
-            conn: conn_name,
-            hash,
-            selection,
-            confirmed,
-        } = target;
+        let RunTarget { start, end, conn: conn_name, hash, selection, confirmed } = target;
         let conn_name = conn_name.as_str();
         let Some(doc) = self.docs.get(key) else {
             return Ok(());
@@ -216,10 +207,8 @@ impl Server {
                 "zpg: the file changed since this ▶ was drawn; nothing was run, click it again".into(),
             );
         };
-        let ranges: Vec<_> = sqlsplit::split(&text[start..end])
-            .into_iter()
-            .map(|r| start + r.start..start + r.end)
-            .collect();
+        let ranges: Vec<_> =
+            sqlsplit::split(&text[start..end]).into_iter().map(|r| start + r.start..start + r.end).collect();
         if ranges.is_empty() {
             return Ok(());
         }
@@ -309,11 +298,7 @@ impl Server {
         millis: u128,
         target: &Path,
     ) -> Res<()> {
-        let edit = self
-            .db
-            .client(&self.settings, conn_name)
-            .ok()
-            .and_then(|c| db::edit_source(c, &out.columns));
+        let edit = self.db.client(&self.settings, conn_name).ok().and_then(|c| db::edit_source(c, &out.columns));
         let st = ResultState {
             conn: conn_name.to_string(),
             sql: sql.to_string(),
@@ -338,14 +323,8 @@ impl Server {
                 typ: MessageType::WARNING,
                 message,
                 actions: Some(vec![
-                    MessageActionItem {
-                        title: RUN.into(),
-                        properties: Default::default(),
-                    },
-                    MessageActionItem {
-                        title: "Cancel".into(),
-                        properties: Default::default(),
-                    },
+                    MessageActionItem { title: RUN.into(), properties: Default::default() },
+                    MessageActionItem { title: "Cancel".into(), properties: Default::default() },
                 ]),
             },
         )?;
@@ -434,7 +413,14 @@ impl Server {
     }
 
     /// Adds statements that ran fine to `.zpg/history.sql`.
-    fn record_history(&mut self, conn: &Connection, from: &Path, conn_name: &str, stmts: &[&str], summary: &str) -> Res<()> {
+    fn record_history(
+        &mut self,
+        conn: &Connection,
+        from: &Path,
+        conn_name: &str,
+        stmts: &[&str],
+        summary: &str,
+    ) -> Res<()> {
         let root = self.zpg_root(from);
         state::ensure_root(&root)?;
         let target = root.join("history.sql");
@@ -582,10 +568,7 @@ impl Server {
         } else {
             format!("({}) IN ({sub})", table_keys.join(", "))
         };
-        let query = Query {
-            filter,
-            ..Query::first(page.query.limit)
-        };
+        let query = Query { filter, ..Query::first(page.query.limit) };
         let d = self.defaults(&st.conn, query, page.width, page.apply, edit.columns.clone());
         let loaded = match self.load_table(&target, &st.conn, &edit.table, &d) {
             Ok(s) => s,
@@ -608,9 +591,7 @@ impl Server {
         let Some(root) = doc.path().and_then(|p| p.parent().map(Path::to_path_buf)) else {
             return Ok(());
         };
-        let target = root
-            .join(encode_name(&conn_name))
-            .join(format!("drop-{}.sql", table.file_stem()));
+        let target = root.join(encode_name(&conn_name)).join(format!("drop-{}.sql", table.file_stem()));
         let text = format!(
             "-- @conn {conn_name}\n\
              -- Review, then run with ▶ (or ctrl-. → Run statement). This can't be undone.\n\
@@ -791,10 +772,7 @@ pub(super) fn relocate(
         return (valid(start, end) && fnv(&text[start..end]) == hash).then_some((start, end));
     }
     let stmts = sqlsplit::split(text);
-    if let Some(r) = stmts
-        .iter()
-        .filter(|r| fnv(&text[r.start..r.end]) == hash)
-        .min_by_key(|r| r.start.abs_diff(start))
+    if let Some(r) = stmts.iter().filter(|r| fnv(&text[r.start..r.end]) == hash).min_by_key(|r| r.start.abs_diff(start))
     {
         return Some((r.start, r.end));
     }
@@ -808,11 +786,7 @@ fn result_snapshot(conn: &str, cols: &[ResultCol], rows: &[Vec<Option<String>>],
         table: QualName::new("", ""),
         columns: cols
             .iter()
-            .map(|c| Column {
-                name: c.name.clone(),
-                type_name: c.type_name.clone(),
-                ..Default::default()
-            })
+            .map(|c| Column { name: c.name.clone(), type_name: c.type_name.clone(), ..Default::default() })
             .collect(),
         pk: vec![],
         foreign_keys: vec![],
@@ -823,13 +797,7 @@ fn result_snapshot(conn: &str, cols: &[ResultCol], rows: &[Vec<Option<String>>],
         width,
         apply: Apply::Manual,
         visible: vec![],
-        rows: rows
-            .iter()
-            .map(|values| SnapRow {
-                xmin: None,
-                values: values.clone(),
-            })
-            .collect(),
+        rows: rows.iter().map(|values| SnapRow { xmin: None, values: values.clone() }).collect(),
     }
 }
 

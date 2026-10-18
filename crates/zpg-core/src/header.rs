@@ -35,19 +35,14 @@ pub fn encode_name(s: &str) -> String {
 /// Quotes only when Postgres would otherwise fold case or reject the name.
 pub fn display_ident(s: &str) -> String {
     let mut chars = s.chars();
-    let plain = chars
-        .next()
-        .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+    let plain = chars.next().is_some_and(|c| c.is_ascii_lowercase() || c == '_')
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '$');
     if plain { s.to_string() } else { quote_ident(s) }
 }
 
 impl QualName {
     pub fn new(schema: impl Into<String>, name: impl Into<String>) -> Self {
-        Self {
-            schema: schema.into(),
-            name: name.into(),
-        }
+        Self { schema: schema.into(), name: name.into() }
     }
 
     pub fn sql(&self) -> String {
@@ -115,9 +110,7 @@ fn parse_ident(s: &str) -> Option<(String, usize)> {
         }
         None
     } else {
-        let end = s
-            .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
-            .unwrap_or(s.len());
+        let end = s.find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$')).unwrap_or(s.len());
         (end > 0).then(|| (s[..end].to_lowercase(), end))
     }
 }
@@ -143,12 +136,7 @@ pub struct Query {
 impl Query {
     /// The first page of `limit` rows, unfiltered and in key order.
     pub fn first(limit: u32) -> Self {
-        Self {
-            page: 1,
-            limit,
-            filter: String::new(),
-            order: String::new(),
-        }
+        Self { page: 1, limit, filter: String::new(), order: String::new() }
     }
 
     pub fn offset(&self) -> u64 {
@@ -288,7 +276,8 @@ pub fn parse_pairs(s: &str, known: &[&str]) -> Result<Vec<(String, String)>, Str
 fn next_field(s: &str, known: &[&str]) -> Option<usize> {
     s.char_indices().find_map(|(i, c)| {
         let after = s[i..].trim_start();
-        let starts = c.is_whitespace() && known.iter().any(|k| after.strip_prefix(k).is_some_and(|r| r.starts_with('=')));
+        let starts =
+            c.is_whitespace() && known.iter().any(|k| after.strip_prefix(k).is_some_and(|r| r.starts_with('=')));
         starts.then_some(i)
     })
 }
@@ -323,9 +312,7 @@ impl TableHeader {
     }
 
     pub fn parse(line: &str) -> Result<Self, String> {
-        let rest = line
-            .strip_prefix(MAGIC)
-            .ok_or_else(|| format!("first line must start with `{MAGIC}`"))?;
+        let rest = line.strip_prefix(MAGIC).ok_or_else(|| format!("first line must start with `{MAGIC}`"))?;
         let mut conn = None;
         let mut table = None;
         let mut h = TableHeader {
@@ -381,12 +368,7 @@ mod tests {
             conn: "local".into(),
             table: QualName::new("public", "My Table"),
             pk: "id".into(),
-            query: Query {
-                page: 3,
-                limit: 50,
-                filter: "name = 'a \"b\"'".into(),
-                order: "id desc".into(),
-            },
+            query: Query { page: 3, limit: 50, filter: "name = 'a \"b\"'".into(), order: "id desc".into() },
             width: 0,
             apply: Apply::Manual,
             columns: vec!["id".into(), "Full Name".into()],
@@ -411,14 +393,20 @@ mod tests {
 
     #[test]
     fn unquoted_spaced_values() {
-        let h = TableHeader::parse("# zpg v1 conn=c table=public.t order=id desc where=a = 'x y' and b > 2 page=2").unwrap();
+        let h = TableHeader::parse("# zpg v1 conn=c table=public.t order=id desc where=a = 'x y' and b > 2 page=2")
+            .unwrap();
         assert_eq!(h.query.order, "id desc");
         assert_eq!(h.query.filter, "a = 'x y' and b > 2");
         assert_eq!(h.query.page, 2);
         let h = TableHeader::parse("# zpg v1 conn=c table=public.t apply=manual order=name").unwrap();
         assert_eq!((h.query.order.as_str(), h.apply), ("name", Apply::Manual));
         assert!(h.render().ends_with("order=name"));
-        assert!(TableHeader::parse("# zpg v1 conn=c table=public.t order=id desc").unwrap().render().contains(r#"order="id desc""#));
+        assert!(
+            TableHeader::parse("# zpg v1 conn=c table=public.t order=id desc")
+                .unwrap()
+                .render()
+                .contains(r#"order="id desc""#)
+        );
     }
 
     #[test]
@@ -430,10 +418,7 @@ mod tests {
     #[test]
     fn qualname_parse() {
         assert_eq!("Public.Users".parse::<QualName>().unwrap(), QualName::new("public", "users"));
-        assert_eq!(
-            r#"s."a""b.c""#.parse::<QualName>().unwrap(),
-            QualName::new("s", "a\"b.c")
-        );
+        assert_eq!(r#"s."a""b.c""#.parse::<QualName>().unwrap(), QualName::new("s", "a\"b.c"));
         assert_eq!(QualName::new("s", "a\"b.c").to_string(), r#"s."a""b.c""#);
     }
 }

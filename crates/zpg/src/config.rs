@@ -37,11 +37,7 @@ impl ConnSpec {
 
     pub fn ssh(&self) -> Option<(&str, &[String])> {
         match self {
-            ConnSpec::Full {
-                ssh: Some(target),
-                ssh_options,
-                ..
-            } => Some((target, ssh_options)),
+            ConnSpec::Full { ssh: Some(target), ssh_options, .. } => Some((target, ssh_options)),
             _ => None,
         }
     }

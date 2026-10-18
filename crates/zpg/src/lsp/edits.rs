@@ -29,17 +29,10 @@ pub fn minimal_edits(old: &str, new: &str) -> Vec<TextEdit> {
             }
         } else if o1 < a.len() {
             let text: String = b[n0..n1].iter().flat_map(|l| [*l, "\n"]).collect();
-            edits.push(TextEdit::new(
-                Range::new(Position::new(o0 as u32, 0), Position::new(o1 as u32, 0)),
-                text,
-            ));
+            edits.push(TextEdit::new(Range::new(Position::new(o0 as u32, 0), Position::new(o1 as u32, 0)), text));
         } else {
             // Touches the last line, which has no trailing newline to anchor on.
-            let start = if o0 > 0 {
-                Position::new(o0 as u32 - 1, utf16_len(a[o0 - 1]))
-            } else {
-                Position::new(0, 0)
-            };
+            let start = if o0 > 0 { Position::new(o0 as u32 - 1, utf16_len(a[o0 - 1])) } else { Position::new(0, 0) };
             let mut text = b[n0..n1].join("\n");
             if o0 > 0 && n1 > n0 {
                 text.insert(0, '\n');

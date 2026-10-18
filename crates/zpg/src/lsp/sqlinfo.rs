@@ -76,19 +76,15 @@ impl Server {
         let at = position_to_offset(&doc.text, pos);
         let r = sqlsplit::around(&doc.text, at);
         let conn = self.conns_for(&sqlsplit::conn_directives(&doc.text), r.start).into_iter().next()?;
-        Some(SqlAt {
-            stmt: doc.text[r.clone()].to_string(),
-            offset: at - r.start,
-            conn,
-            path: doc.path()?,
-        })
+        Some(SqlAt { stmt: doc.text[r.clone()].to_string(), offset: at - r.start, conn, path: doc.path()? })
     }
 
     /// Tables and columns of `conn`, read on first use.
     fn schema(&mut self, conn: &str) -> Option<&Schema> {
-        let fresh = self.schemas.get(conn).is_some_and(|(at, s)| {
-            at.elapsed() < if s.is_some() { SCHEMA_TTL } else { FAILED_TTL }
-        });
+        let fresh = self
+            .schemas
+            .get(conn)
+            .is_some_and(|(at, s)| at.elapsed() < if s.is_some() { SCHEMA_TTL } else { FAILED_TTL });
         if !fresh {
             let schema = self.db.client(&self.settings, conn).and_then(db::schema).ok();
             self.schemas.insert(conn.to_string(), (Instant::now(), schema));
@@ -125,7 +121,9 @@ impl Server {
                         let detail = format!("{}{}", t.rel.kind, rows_note(t));
                         (1, item(&label, kind, Some(&detail), range))
                     }
-                    Candidate::Schema(s) => (2, item(&display_ident(s), CompletionItemKind::MODULE, Some("schema"), range)),
+                    Candidate::Schema(s) => {
+                        (2, item(&display_ident(s), CompletionItemKind::MODULE, Some("schema"), range))
+                    }
                     Candidate::Keyword(k) => (3, item(k, CompletionItemKind::KEYWORD, None, range)),
                 };
                 it.sort_text = Some(format!("{rank}{}", it.label));
@@ -140,13 +138,8 @@ impl Server {
         let md = match self.schema(&at.conn)?.resolve(&at.stmt, at.offset)? {
             Target::Table(t) => table_md(t, &conn, None),
             Target::Column(t, c) => {
-                let mut md = format!(
-                    "**{}.{}** `{}`{}",
-                    t.short_name(),
-                    display_ident(&c.name),
-                    c.type_name,
-                    column_flags(c)
-                );
+                let mut md =
+                    format!("**{}.{}** `{}`{}", t.short_name(), display_ident(&c.name), c.type_name, column_flags(c));
                 if let Some(comment) = &c.comment {
                     md += &format!("\n\n{comment}");
                 }

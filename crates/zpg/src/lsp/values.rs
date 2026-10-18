@@ -12,9 +12,7 @@ const MAX_HOVER_VALUE: usize = 20_000;
 pub fn value_md(v: &str, type_name: &str, cut: bool) -> String {
     let t = type_name.to_ascii_lowercase();
     let special = if t.ends_with("[]") || (t.starts_with('_') && v.starts_with(['{', '['])) {
-        array_md(v)
-            .filter(|list| cut || list.lines().count() > 1)
-            .map(|list| block("", &list, ""))
+        array_md(v).filter(|list| cut || list.lines().count() > 1).map(|list| block("", &list, ""))
     } else if t == "bytea" {
         bytea_md(v)
     } else if t == "xml" {
@@ -122,10 +120,8 @@ fn array_md(v: &str) -> Option<String> {
 /// Size, then text when it's UTF-8, else a hex dump of the start.
 fn bytea_md(v: &str) -> Option<String> {
     let hex = v.strip_prefix("\\x")?;
-    let bytes: Vec<u8> = (0..hex.len() / 2)
-        .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16))
-        .collect::<Result<_, _>>()
-        .ok()?;
+    let bytes: Vec<u8> =
+        (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<_, _>>().ok()?;
     let size = format!("\n\n{} bytes", bytes.len());
     if let Ok(s) = std::str::from_utf8(&bytes)
         && !s.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
@@ -135,10 +131,7 @@ fn bytea_md(v: &str) -> Option<String> {
     let mut dump = String::new();
     for (row, chunk) in bytes.chunks(16).take(16).enumerate() {
         let hex: Vec<String> = chunk.iter().map(|b| format!("{b:02x}")).collect();
-        let ascii: String = chunk
-            .iter()
-            .map(|&b| if (0x20..0x7f).contains(&b) { b as char } else { '.' })
-            .collect();
+        let ascii: String = chunk.iter().map(|&b| if (0x20..0x7f).contains(&b) { b as char } else { '.' }).collect();
         dump += &format!("{:08x}  {:<47}  {ascii}\n", row * 16, hex.join(" "));
     }
     let more = if bytes.len() > 256 { "\n\nfirst 256 bytes" } else { "" };
@@ -298,10 +291,7 @@ mod tests {
 
     #[test]
     fn xml() {
-        assert_eq!(
-            pretty_xml("<a><b x=\"1\">text</b><c/></a>"),
-            "<a>\n  <b x=\"1\">text</b>\n  <c/>\n</a>"
-        );
+        assert_eq!(pretty_xml("<a><b x=\"1\">text</b><c/></a>"), "<a>\n  <b x=\"1\">text</b>\n  <c/>\n</a>");
     }
 
     #[test]

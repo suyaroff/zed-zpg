@@ -85,12 +85,7 @@ impl Snapshot {
         TableHeader {
             conn: self.conn.clone(),
             table: self.table.clone(),
-            pk: self
-                .pk
-                .iter()
-                .map(|&i| self.columns[i].name.as_str())
-                .collect::<Vec<_>>()
-                .join(","),
+            pk: self.pk.iter().map(|&i| self.columns[i].name.as_str()).collect::<Vec<_>>().join(","),
             query: self.query.clone(),
             width: self.width,
             apply: self.apply,
@@ -103,17 +98,15 @@ impl Snapshot {
     /// `visible` (all when empty) plus the key.
     pub fn shown(&self) -> Vec<usize> {
         (0..self.columns.len())
-            .filter(|&i| self.visible.is_empty() || self.pk.contains(&i) || self.visible.contains(&self.columns[i].name))
+            .filter(|&i| {
+                self.visible.is_empty() || self.pk.contains(&i) || self.visible.contains(&self.columns[i].name)
+            })
             .collect()
     }
 
     /// Names in `visible` that aren't columns of the table.
     pub fn unknown_visible(&self, names: &[String]) -> Vec<String> {
-        names
-            .iter()
-            .filter(|n| !self.columns.iter().any(|c| &c.name == *n))
-            .cloned()
-            .collect()
+        names.iter().filter(|n| !self.columns.iter().any(|c| &c.name == *n)).cloned().collect()
     }
 
     pub fn column_names(&self) -> Vec<String> {
@@ -125,9 +118,8 @@ impl Snapshot {
     /// the widest other columns are cut further to a common width.
     pub fn widths(&self) -> Vec<u32> {
         let shown = self.shown();
-        let base: Vec<u32> = (0..self.columns.len())
-            .map(|i| if self.pk.contains(&i) { 0 } else { self.width })
-            .collect();
+        let base: Vec<u32> =
+            (0..self.columns.len()).map(|i| if self.pk.contains(&i) { 0 } else { self.width }).collect();
         let name_w: Vec<usize> = self.columns.iter().map(|c| display_width(&cell::escape(&c.name))).collect();
         let full_w: Vec<usize> = (0..self.columns.len())
             .map(|i| {
@@ -185,10 +177,7 @@ impl Snapshot {
     pub fn cells(&self) -> Vec<Vec<String>> {
         let w = self.widths();
         let shown = self.shown();
-        self.rows
-            .iter()
-            .map(|r| shown.iter().map(|&i| self.cell(i, &r.values[i], &w).0).collect())
-            .collect()
+        self.rows.iter().map(|r| shown.iter().map(|&i| self.cell(i, &r.values[i], &w).0).collect()).collect()
     }
 
     pub fn render(&self) -> String {
