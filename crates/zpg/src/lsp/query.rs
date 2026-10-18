@@ -16,9 +16,10 @@ use zpg_core::{
     Apply, Column, Issue, QualName, Query, Severity, SnapRow, Snapshot, catalog, history, sqlctx, sqlsplit, table,
 };
 
+use super::page::cell_at;
 use super::running;
 use super::{
-    CMD_EDIT_RESULT, CMD_EXPLAIN, CMD_RERUN, CMD_RUN, Doc, Kind, Res, Server, cell_at, command, encode_name, fnv,
+    CMD_EDIT_RESULT, CMD_EXPLAIN, CMD_RERUN, CMD_RUN, Doc, Kind, Res, Server, command, encode_name, fnv,
     markdown_hover, show, snapshot,
 };
 use crate::db::{self, EditSource, ResultCol};
