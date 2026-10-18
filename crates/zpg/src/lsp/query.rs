@@ -611,7 +611,7 @@ impl Server {
             return Ok(());
         };
         let target = dir.join(format!("{}.ddl.sql", table.file_stem()));
-        let ddl = match self.db.client(&self.settings, &conn_name).and_then(|c| db::ddl(c, &table)) {
+        let ddl = match self.db.read(&self.settings, &conn_name, |c| db::ddl(c, &table)) {
             Ok(d) => d,
             Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),
         };

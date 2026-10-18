@@ -19,7 +19,7 @@ impl Server {
         let sections: Vec<Section> = names
             .into_iter()
             .map(|name| {
-                let relations = self.db.client(&self.settings, &name).and_then(db::catalog);
+                let relations = self.db.read(&self.settings, &name, db::catalog);
                 Section { conn: name, relations }
             })
             .collect();

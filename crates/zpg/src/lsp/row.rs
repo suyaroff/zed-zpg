@@ -39,8 +39,10 @@ impl Server {
         if self.row_has_local_edits(&path) {
             return Ok(path);
         }
-        let client = self.db.client(&self.settings, &snap.conn)?;
-        let fetched = db::fetch_row(client, snap, &key, true)?.ok_or("the row no longer exists; refresh the table")?;
+        let fetched = self
+            .db
+            .read(&self.settings, &snap.conn, |c| db::fetch_row(c, snap, &key, true))?
+            .ok_or("the row no longer exists; refresh the table")?;
         let row_snap = Snapshot { rows: vec![fetched], width: 0, ..snap.clone() };
         let label = snap
             .pk
@@ -65,12 +67,11 @@ impl Server {
         let label = record::RowHeader::parse(self.docs[key].text.lines().next().unwrap_or(""))
             .map(|h| h.key)
             .unwrap_or_default();
-        let fetched =
-            match self.db.client(&self.settings, &snap.conn).and_then(|c| db::fetch_row(c, &snap, &key_values, true)) {
-                Ok(Some(r)) => r,
-                Ok(None) => return show(conn, MessageType::WARNING, "zpg: the row no longer exists".into()),
-                Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),
-            };
+        let fetched = match self.db.read(&self.settings, &snap.conn, |c| db::fetch_row(c, &snap, &key_values, true)) {
+            Ok(Some(r)) => r,
+            Ok(None) => return show(conn, MessageType::WARNING, "zpg: the row no longer exists".into()),
+            Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),
+        };
         let new = Snapshot { rows: vec![fetched], ..snap };
         let text = record::render(&new, &label);
         self.store(path, new)?;
@@ -128,7 +129,7 @@ impl Server {
         let Some(i) = table.rows.iter().position(|r| table.pk.iter().zip(&key).all(|(&k, v)| &r.values[k] == v)) else {
             return Ok(());
         };
-        let fetched = self.db.client(&self.settings, &table.conn).and_then(|c| db::fetch_row(c, &table, &key, false));
+        let fetched = self.db.read(&self.settings, &table.conn, |c| db::fetch_row(c, &table, &key, false));
         if let Ok(Some(r)) = fetched {
             table.rows[i] = r;
             let text = table.render();

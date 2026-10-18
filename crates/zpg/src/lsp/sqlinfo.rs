@@ -86,7 +86,7 @@ impl Server {
             .get(conn)
             .is_some_and(|(at, s)| at.elapsed() < if s.is_some() { SCHEMA_TTL } else { FAILED_TTL });
         if !fresh {
-            let schema = self.db.client(&self.settings, conn).and_then(db::schema).ok();
+            let schema = self.db.read(&self.settings, conn, db::schema).ok();
             self.schemas.insert(conn.to_string(), (Instant::now(), schema));
         }
         self.schemas.get(conn)?.1.as_ref()
@@ -152,7 +152,7 @@ impl Server {
     /// A catalog line: the relation's columns, size and indexes.
     pub(super) fn catalog_hover(&mut self, text: &str, pos: Position) -> Option<Hover> {
         let (conn, table) = catalog::entry_at(text, pos.line)?;
-        let details = self.db.client(&self.settings, &conn).and_then(|c| db::details(c, &table)).ok();
+        let details = self.db.read(&self.settings, &conn, |c| db::details(c, &table)).ok();
         let t = self.schema(&conn)?.table(Some(&table.schema), &table.name)?;
         let note = details.as_ref().map_or(String::new(), |d| d.size.clone());
         let mut md = table_md(t, &note, details.as_ref().and_then(|d| d.comment.as_deref()));

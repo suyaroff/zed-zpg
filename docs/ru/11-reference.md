@@ -204,6 +204,7 @@
 | `…/config.json: …` | ошибка в файле настроек | исправьте место из сообщения; до этого действуют прежние настройки |
 | ``no connection `x` in …`` | в файле подключение, которого нет в настройках | добавьте его в `~/.config/zpg/config.json` |
 | `environment variable X is not set` | в URL есть `${X}`, а переменной нет | задайте переменную и перезапустите Zed |
+| `error communicating with the server`, `terminating connection…` при записи или запуске SQL | соединение оборвалось во время выполнения | нажмите ещё раз — zpg подключится заново; чтение повторяется само, см. [Обрыв соединения](02-connections.md#обрыв-соединения) |
 | `ssh to …: Host key verification failed` | сервера нет в `known_hosts` | один раз зайдите на сервер `ssh` из терминала |
 | `ssh to …: Permission denied (publickey…)` | ключ не подошёл или не в agent | `ssh-add`, проверьте `~/.ssh/config`; вход по паролю не поддерживается |
 | `ssh to …: no tunnel after 20 s` | ssh завис на подключении | проверьте доступность сервера и `ProxyJump` |

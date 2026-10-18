@@ -262,13 +262,43 @@ impl Db {
         Some(Canceller { token: s.client.cancel_token(), tls: s.tls })
     }
 
+    /// The client of `conn`, connecting when it has none or it's closed.
+    /// Postgres closing an idle connection is only noticed when it's next
+    /// used: see `read` and `client_checked`.
     pub fn client(&mut self, settings: &Settings, conn: &str) -> Result<&mut Client, String> {
+        self.session(settings, conn, false)
+    }
+
+    /// Like `client`, but a round trip first makes sure the connection still
+    /// works, for what mustn't fail on a stale one and can't simply run again.
+    pub fn client_checked(&mut self, settings: &Settings, conn: &str) -> Result<&mut Client, String> {
+        self.session(settings, conn, true)
+    }
+
+    /// Runs the read `f` on the client of `conn`; when it fails because the
+    /// connection had closed, connects again and runs it once more.
+    pub fn read<T>(
+        &mut self,
+        settings: &Settings,
+        conn: &str,
+        mut f: impl FnMut(&mut Client) -> Result<T, String>,
+    ) -> Result<T, String> {
+        match f(self.client(settings, conn)?) {
+            Err(_) if self.sessions.get(conn).is_some_and(|s| s.client.is_closed()) => f(self.client(settings, conn)?),
+            r => r,
+        }
+    }
+
+    fn session(&mut self, settings: &Settings, conn: &str, check: bool) -> Result<&mut Client, String> {
         let spec = settings.connections.get(conn).ok_or_else(|| {
             let file = config_path().map_or("the zpg settings file".into(), |p| p.display().to_string());
             format!("no connection `{conn}` in {file}")
         })?;
         // A dead tunnel means a dead connection, even before a query notices.
-        let alive = self.sessions.get_mut(conn).is_some_and(|s| s.alive(spec));
+        let alive = self
+            .sessions
+            .get_mut(conn)
+            .is_some_and(|s| s.alive(spec) && (!check || s.client.is_valid(CHECK_TIMEOUT).is_ok()));
         let session = match self.sessions.entry(conn.to_string()) {
             Entry::Occupied(o) if alive => o.into_mut(),
             // A closed client's tunnel may still be up: connect through it again.
@@ -282,6 +312,9 @@ impl Db {
         Ok(&mut session.client)
     }
 }
+
+/// How long `client_checked` waits for the server to answer.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn params(stmt: &Stmt) -> Vec<&(dyn ToSql + Sync)> {
     stmt.params.iter().map(|p| p as &(dyn ToSql + Sync)).collect()

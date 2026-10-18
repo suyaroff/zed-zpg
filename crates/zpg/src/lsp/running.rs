@@ -159,7 +159,8 @@ impl Server {
 
     /// Runs `f` on the client of `conn_name` with `title` in the status bar;
     /// until it returns, ctrl-. offers to cancel it. The inner error is the
-    /// connection's.
+    /// connection's. A stale connection is noticed and replaced before `f`
+    /// runs, since what it runs (any statement) can't simply run again.
     pub(super) fn cancellable<T>(
         &mut self,
         conn: &Connection,
@@ -167,7 +168,7 @@ impl Server {
         title: &str,
         f: impl FnOnce(&mut Client) -> T,
     ) -> Res<Result<T, String>> {
-        if let Err(e) = self.db.client(&self.settings, conn_name) {
+        if let Err(e) = self.db.client_checked(&self.settings, conn_name) {
             return Ok(Err(e));
         }
         let token = self.progress_begin(conn, title)?;

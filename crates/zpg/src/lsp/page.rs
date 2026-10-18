@@ -237,8 +237,7 @@ impl Server {
         table: &QualName,
         d: &Defaults,
     ) -> Result<Snapshot, String> {
-        let client = self.db.client(&self.settings, conn)?;
-        let snap = db::load(client, conn, table, d)?;
+        let snap = self.db.read(&self.settings, conn, |c| db::load(c, conn, table, d))?;
         self.store(path, snap.clone())?;
         Ok(snap)
     }
@@ -437,7 +436,8 @@ impl Server {
         snap: &Snapshot,
         d: &Diff,
     ) -> Res<Option<Vec<Option<zpg_core::SnapRow>>>> {
-        let client = match self.db.client(&self.settings, &snap.conn) {
+        // A stale connection is noticed before writing: a write isn't run twice.
+        let client = match self.db.client_checked(&self.settings, &snap.conn) {
             Ok(c) => c,
             Err(e) => {
                 show(conn, MessageType::ERROR, format!("zpg: {e}"))?;
@@ -521,7 +521,7 @@ impl Server {
         new.width = header.width;
         new.visible = header.columns.clone();
         if header.query != snap.query {
-            let fetched = self.db.client(&self.settings, &snap.conn).and_then(|c| db::fetch(c, &new, &header.query));
+            let fetched = self.db.read(&self.settings, &snap.conn, |c| db::fetch(c, &new, &header.query));
             match fetched {
                 Ok(rows) => {
                     if header.query.filter != snap.query.filter
@@ -572,7 +572,7 @@ impl Server {
 
     /// The row `fk` points at, as markdown.
     pub(super) fn referenced_md(&mut self, snap: &Snapshot, fk: &ForeignKey, values: &[String]) -> String {
-        let fetched = self.db.client(&self.settings, &snap.conn).and_then(|c| db::referenced(c, snap, fk, values));
+        let fetched = self.db.read(&self.settings, &snap.conn, |c| db::referenced(c, snap, fk, values));
         match fetched {
             Ok(Some(fields)) => {
                 let mut md = format!("\n\n**→ {}** (F12 opens it)\n\n", fk.table);
