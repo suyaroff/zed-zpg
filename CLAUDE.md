@@ -13,6 +13,7 @@ cargo fmt --all --check                        # rustfmt.toml
 cargo clippy --workspace -- -D warnings
 cargo test --workspace
 cargo build --release --target wasm32-wasip2   # the Zed extension (root crate); needs `rustup target add wasm32-wasip2`
+cargo audit --deny warnings                    # RustSec advisories for Cargo.lock; CI also runs it weekly
 ```
 
 - Single test: `cargo test -p zpg-core <test_name>` (or `-p zpg`). Tests are unit tests inside the modules; none need a running Postgres.
