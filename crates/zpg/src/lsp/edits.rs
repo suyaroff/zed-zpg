@@ -41,7 +41,7 @@ pub fn minimal_edits(old: &str, new: &str) -> Vec<TextEdit> {
                 Position::new(0, 0)
             };
             let mut text = b[n0..n1].join("\n");
-            if o0 > 0 {
+            if o0 > 0 && n1 > n0 {
                 text.insert(0, '\n');
             }
             let end = Position::new(a.len() as u32 - 1, utf16_len(a[a.len() - 1]));
@@ -77,4 +77,75 @@ fn line_edits(line: u32, old: &str, new: &str) -> Vec<TextEdit> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `text` with `edits` (in order, not overlapping) applied.
+    fn apply(text: &str, edits: &[TextEdit]) -> String {
+        let offset = |p: Position| {
+            let line_start: usize = text.split('\n').take(p.line as usize).map(|l| l.len() + 1).sum();
+            let line = text[line_start.min(text.len())..].split('\n').next().unwrap_or("");
+            let mut col = 0;
+            for (b, c) in line.char_indices() {
+                if col >= p.character {
+                    return line_start + b;
+                }
+                col += c.len_utf16() as u32;
+            }
+            line_start + line.len()
+        };
+        let mut out = text.to_string();
+        for e in edits.iter().rev() {
+            out.replace_range(offset(e.range.start)..offset(e.range.end), &e.new_text);
+        }
+        out
+    }
+
+    #[test]
+    fn edits_turn_old_into_new() {
+        let cases = [
+            ("a\nb\nc\n", "a\nb\nc\n"),
+            ("a\nb\nc\n", "a\nB\nc\n"),
+            ("| 1 | кот |\n| 2 | x |\n", "| 1 | кот 🐈 |\n| 2 | x |\n"),
+            ("a\nb\nc\n", "a\nx\ny\nb\nc\n"),
+            ("a\nb\nc\nd\n", "a\nd\n"),
+            ("a\nb", "a\nb\nc"),
+            ("a\nb\nc", "a"),
+            ("a\nb\n", "a\nb"),
+            ("", "x\ny\n"),
+            ("x\ny\n", ""),
+        ];
+        for (old, new) in cases {
+            let edits = minimal_edits(old, new);
+            assert_eq!(apply(old, &edits), new, "{old:?} -> {new:?}: {edits:?}");
+        }
+        assert!(minimal_edits("a\n", "a\n").is_empty());
+    }
+
+    #[test]
+    fn every_short_pair() {
+        let mut texts = vec![String::new()];
+        for _ in 0..4 {
+            let longer: Vec<String> = texts.iter().flat_map(|t| ["a", "é", "\n"].map(|c| format!("{t}{c}"))).collect();
+            texts.extend(longer);
+        }
+        texts.sort();
+        texts.dedup();
+        for old in &texts {
+            for new in &texts {
+                assert_eq!(&apply(old, &minimal_edits(old, new)), new, "{old:?} -> {new:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn changed_cell_is_a_small_edit() {
+        let edits = minimal_edits("h\n| 1 | abc |\n| 2 | def |\n", "h\n| 1 | abd |\n| 2 | def |\n");
+        assert_eq!(edits.len(), 1, "{edits:?}");
+        assert_eq!(edits[0].range.start, Position::new(1, 8));
+        assert_eq!(edits[0].new_text, "d");
+    }
 }

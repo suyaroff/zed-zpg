@@ -773,8 +773,9 @@ fn run_args(text: &str, key: &str, start: usize, end: usize, conn: &str) -> Vec<
 /// Where the statement a command was made for is now. Offsets in a code
 /// lens go stale as soon as the buffer is edited, so: the same text if it's
 /// still there (the nearest copy), else the statement that starts where it
-/// started (it was edited itself); `None` rather than guess.
-/// A selection must still hold exactly the same text.
+/// started (it was edited itself); `None` rather than guess. The same text
+/// must be a whole statement: what was `… id = 1` may now be the start of
+/// `… id = 10`. A selection must still hold exactly the same text.
 pub(super) fn relocate(
     text: &str,
     start: usize,
@@ -786,11 +787,8 @@ pub(super) fn relocate(
     let Some(hash) = hash else {
         return valid(start, end).then_some((start, end));
     };
-    if valid(start, end) && fnv(&text[start..end]) == hash {
-        return Some((start, end));
-    }
     if selection {
-        return None;
+        return (valid(start, end) && fnv(&text[start..end]) == hash).then_some((start, end));
     }
     let stmts = sqlsplit::split(text);
     if let Some(r) = stmts
@@ -832,5 +830,59 @@ fn result_snapshot(conn: &str, cols: &[ResultCol], rows: &[Vec<Option<String>>],
                 values: values.clone(),
             })
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn offsets_and_positions() {
+        let text = "ab\n🐈x\n";
+        for (offset, pos) in [(0, (0, 0)), (2, (0, 2)), (3, (1, 0)), (7, (1, 2)), (8, (1, 3)), (9, (2, 0))] {
+            assert_eq!(offset_to_position(text, offset), Position::new(pos.0, pos.1), "{offset}");
+            assert_eq!(position_to_offset(text, Position::new(pos.0, pos.1)), offset, "{pos:?}");
+        }
+        assert_eq!(position_to_offset(text, Position::new(0, 99)), 2);
+        assert_eq!(position_to_offset(text, Position::new(9, 0)), text.len());
+    }
+
+    #[test]
+    fn stale_commands_find_their_statement() {
+        let text = "select 1;\nselect 2;\n";
+        let hash = |s: &str| Some(fnv(s));
+        let (s2, e2) = (10, 18);
+        assert_eq!(relocate(text, s2, e2, hash("select 2"), false), Some((s2, e2)));
+        // Text added above: the same statement, moved.
+        let moved = format!("-- note\n{text}");
+        assert_eq!(relocate(&moved, s2, e2, hash("select 2"), false), Some((s2 + 8, e2 + 8)));
+        // The statement itself was edited: the one starting where it started.
+        let edited = "select 1;\nselect 22;\n";
+        assert_eq!(relocate(edited, s2, e2, hash("select 2"), false), Some((s2, e2 + 1)));
+        assert_eq!(relocate(edited, s2, e2 + 1, hash("select 2;"), true), None);
+        // A selection keeps its exact text, whatever the statements are.
+        assert_eq!(relocate(text, 0, 13, hash("select 1;\nsel"), true), Some((0, 13)));
+        assert_eq!(relocate(text, 3, 99, None, false), None);
+    }
+
+    #[test]
+    fn errors_underline_the_word_at_their_position() {
+        let text = "select 1;\nselect nope from t;";
+        let r = 10..text.len() - 1;
+        let at = |p| {
+            let i = error_issue(text, r.clone(), p, "e".into());
+            (i.line, i.start, i.end)
+        };
+        assert_eq!(at(Some(8)), (1, 7, 11));
+        assert_eq!(at(None), (1, 0, 6));
+        assert_eq!(at(Some(999)), (1, 17, 18));
+    }
+
+    #[test]
+    fn explainable_statements() {
+        assert!(explainable("  (select 1)"));
+        assert!(explainable("WITH x AS (select 1) select * from x"));
+        assert!(!explainable("create table t ()"));
     }
 }

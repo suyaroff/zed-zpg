@@ -1061,3 +1061,31 @@ pub fn edit_source(c: &mut Client, cols: &[ResultCol]) -> Option<EditSource> {
         columns,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_tags() {
+        assert_eq!(tag("update t set a = 1", Some(3)), "UPDATE 3");
+        assert_eq!(tag("with x as (select 1) delete from t", Some(2)), "WITH 2");
+        assert_eq!(tag("create table t (a int)", Some(0)), "CREATE TABLE");
+        assert_eq!(tag("vacuum", None), "VACUUM");
+    }
+
+    #[test]
+    fn tunnel_targets() {
+        let cfg: Config = "postgresql://u:p@db.example.com:6432/app".parse().unwrap();
+        assert!(matches!(remote_of(&cfg), Remote::Tcp(h, 6432) if h == "db.example.com"));
+        let local = through_tunnel(&cfg, 40000);
+        assert_eq!(local.get_ports(), &[40000]);
+        assert_eq!((local.get_user(), local.get_dbname()), (Some("u"), Some("app")));
+        assert_eq!(local.get_password(), Some(&b"p"[..]));
+        #[cfg(unix)]
+        {
+            let cfg: Config = "postgresql:///app?host=/var/run/postgresql".parse().unwrap();
+            assert!(matches!(remote_of(&cfg), Remote::Unix(p) if p == "/var/run/postgresql/.s.PGSQL.5432"));
+        }
+    }
+}

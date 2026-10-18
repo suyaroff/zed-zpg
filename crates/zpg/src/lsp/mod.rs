@@ -2047,3 +2047,89 @@ fn insert_row(uri: &Uri, parsed: &Parsed, snap: &Snapshot, cursor_line: u32) -> 
         )],
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zpg_core::{Column, SnapRow};
+
+    #[cfg(unix)]
+    #[test]
+    fn uri_round_trip() {
+        let path = Path::new("/tmp/a b/кот%#.pgt");
+        let uri = path_to_uri(path).unwrap();
+        assert_eq!(uri.as_str(), "file:///tmp/a%20b/%D0%BA%D0%BE%D1%82%25%23.pgt");
+        assert_eq!(uri_to_path(&uri).as_deref(), Some(path));
+        assert_eq!(uri_to_path(&"untitled:x".parse().unwrap()), None);
+    }
+
+    #[test]
+    fn row_files() {
+        assert_eq!(row_file(&[Some("1".into()), None]), "1%2CNULL.pgr");
+        let long = row_file(&[Some("x".repeat(200))]);
+        assert!(long.starts_with(&"x".repeat(80)) && long.ends_with(".pgr") && long.len() == 80 + 1 + 16 + 4, "{long}");
+        assert_ne!(long, row_file(&[Some("x".repeat(201))]));
+    }
+
+    #[test]
+    fn tokens_are_relative() {
+        let t = encode_tokens(vec![(2, 4, 6, 1), (0, 1, 3, 0), (2, 0, 2, 2), (3, 5, 5, 0)]);
+        let got: Vec<_> = t.iter().map(|t| (t.delta_line, t.delta_start, t.length, t.token_type)).collect();
+        assert_eq!(got, vec![(0, 1, 2, 0), (2, 0, 2, 2), (0, 4, 2, 1)]);
+    }
+
+    fn snap(filter: &str) -> Snapshot {
+        let col = |n: &str| Column {
+            name: n.into(),
+            type_name: "text".into(),
+            ..Default::default()
+        };
+        Snapshot {
+            conn: "c".into(),
+            table: QualName::new("public", "t"),
+            columns: vec![col("id"), col("city")],
+            pk: vec![0],
+            foreign_keys: vec![],
+            referenced_by: vec![],
+            read_only: None,
+            query: Query {
+                filter: filter.into(),
+                ..Query::first(100)
+            },
+            width: 40,
+            apply: Apply::Manual,
+            visible: vec![],
+            total: None,
+            rows: vec![SnapRow {
+                xmin: Some("1".into()),
+                values: vec![Some("1".into()), Some("it's".into())],
+            }],
+        }
+    }
+
+    /// (title, new `where`) of each filter action on the `city` cell.
+    fn filters(filter: &str) -> Vec<(String, String)> {
+        let s = snap(filter);
+        let line = "| 1  | it's |";
+        filter_actions(&s, "k", line, line.find("it's").unwrap() as u32)
+            .into_iter()
+            .map(|a| match a {
+                CodeActionOrCommand::CodeAction(a) => {
+                    let args = a.command.and_then(|c| c.arguments).unwrap_or_default();
+                    (a.title, args[1].as_str().unwrap_or_default().to_string())
+                }
+                CodeActionOrCommand::Command(c) => (c.title, String::new()),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn filter_by_cell() {
+        let f = filters("");
+        assert_eq!(f[0], ("zpg: Filter: city = 'it's'".into(), "city = 'it''s'".into()));
+        assert_eq!(f[1].1, "city <> 'it''s'");
+        assert_eq!(filters("id > 0")[0], ("zpg: Also filter: city = 'it's'".into(), "id > 0 AND city = 'it''s'".into()));
+        assert_eq!(filters("id = 1 or(id = 2)")[0].1, "(id = 1 or(id = 2)) AND city = 'it''s'");
+        assert_eq!(filters("note = 'x or y'")[0].1, "note = 'x or y' AND city = 'it''s'");
+    }
+}
