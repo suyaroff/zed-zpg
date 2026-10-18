@@ -4,7 +4,7 @@
 
 use crate::cell::Value;
 use crate::diff::Op;
-use crate::header::{Query, quote_ident};
+use crate::header::{Query, quote_ident, quote_literal};
 use crate::{Column, Snapshot};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,7 +183,7 @@ pub fn inline(stmt: &Stmt) -> String {
     let mut sql = stmt.sql.clone();
     for (i, p) in stmt.params.iter().enumerate().rev() {
         let lit = match p {
-            Some(s) => format!("'{}'", s.replace('\'', "''")),
+            Some(s) => quote_literal(s),
             None => "NULL".into(),
         };
         sql = sql.replace(&format!("${}::text", i + 1), &lit);
@@ -201,11 +201,7 @@ mod tests {
         let col = |n: &str, t: &str| Column {
             name: n.into(),
             type_name: t.into(),
-            not_null: false,
-            has_default: false,
-            generated: false,
-            enum_values: vec![],
-            comment: None,
+            ..Default::default()
         };
         Snapshot {
             conn: "c".into(),

@@ -515,7 +515,6 @@ const TABLE_CONTEXT: &[&str] = &["from", "join", "update", "into", "table"];
 impl Schema {
     fn schemas(&self) -> Vec<&str> {
         let mut out: Vec<&str> = self.tables.iter().map(|t| t.rel.name.schema.as_str()).collect();
-        out.dedup();
         out.sort_unstable();
         out.dedup();
         out
@@ -641,11 +640,7 @@ mod tests {
         Column {
             name: name.into(),
             type_name: "text".into(),
-            not_null: false,
-            has_default: false,
-            generated: false,
-            enum_values: vec![],
-            comment: None,
+            ..Default::default()
         }
     }
 

@@ -3,14 +3,14 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use lsp_types::{CompletionItem, CompletionItemKind, Hover, HoverContents, MarkupContent, MarkupKind, Position, Range};
+use lsp_types::{CompletionItem, CompletionItemKind, Hover, Position, Range};
 use zpg_core::header::display_ident;
 use zpg_core::sqlctx::{Candidate, Schema, SchemaTable, Target};
 use zpg_core::{Column, catalog, sqlsplit, utf16_len};
 
 use super::complete::item;
 use super::query::position_to_offset;
-use super::{Kind, Server};
+use super::{Kind, Server, markdown_hover};
 use crate::db;
 use crate::state;
 
@@ -153,13 +153,7 @@ impl Server {
                 md
             }
         };
-        Some(Hover {
-            contents: HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: md,
-            }),
-            range: None,
-        })
+        Some(markdown_hover(md))
     }
 
     /// A catalog line: the relation's columns, size and indexes.
@@ -175,13 +169,7 @@ impl Server {
                 md += &format!("\n- {i}");
             }
         }
-        Some(Hover {
-            contents: HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: md,
-            }),
-            range: None,
-        })
+        Some(markdown_hover(md))
     }
 
     /// F12 on a table (or a column) opens the table's page.

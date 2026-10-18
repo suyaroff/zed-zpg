@@ -47,6 +47,11 @@ impl Issue {
     pub fn line_error(line: u32, text: &str, message: impl Into<String>) -> Self {
         Self::error(line, 0, utf16_len(text), message)
     }
+
+    /// An error about the header line, shown under its `# zpg v1`.
+    pub fn header(message: impl Into<String>) -> Self {
+        Self::error(0, 0, utf16_len(MAGIC), message)
+    }
 }
 
 pub fn utf16_len(s: &str) -> u32 {

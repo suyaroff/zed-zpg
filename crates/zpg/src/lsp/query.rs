@@ -6,7 +6,7 @@ use std::time::Instant;
 use lsp_server::Connection;
 use lsp_types::request::ShowMessageRequest;
 use lsp_types::{
-    CodeActionOrCommand, CodeLens, Command, Hover, HoverContents, MarkupContent, MarkupKind, MessageActionItem,
+    CodeActionOrCommand, CodeLens, Command, Hover, MessageActionItem,
     MessageType, Position, Range, ShowMessageRequestParams,
 };
 use serde::{Deserialize, Serialize};
@@ -18,7 +18,8 @@ use zpg_core::{
 
 use super::running;
 use super::{
-    CMD_EDIT_RESULT, CMD_EXPLAIN, CMD_RERUN, CMD_RUN, Doc, Kind, Res, Server, cell_at, command, encode_name, fnv, show, snapshot,
+    CMD_EDIT_RESULT, CMD_EXPLAIN, CMD_RERUN, CMD_RUN, Doc, Kind, Res, Server, cell_at, command, encode_name, fnv,
+    markdown_hover, show, snapshot,
 };
 use crate::db::{self, EditSource, ResultCol};
 use crate::state;
@@ -242,19 +243,18 @@ impl Server {
         let ran = self.cancellable(conn, conn_name, &format!("Running on {conn_name}"), |c| {
             db::run(c, &stmts, read_only, max_rows, timeout, false)
         })?;
-        let outcomes = match ran {
-            Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),
-            Ok(Ok(o)) => o,
-            Ok(Err(e)) if running::cancelled(&e.message) => {
-                return show(conn, MessageType::INFO, "zpg: cancelled (rolled back)".into());
-            }
-            Ok(Err(e)) => {
-                let issue = error_issue(&text, ranges[e.stmt].clone(), e.position, e.message.clone());
-                self.failed.insert(key.to_string(), issue);
-                self.publish(conn, key)?;
-                let first = e.message.lines().next().unwrap_or("");
-                return show(conn, MessageType::ERROR, format!("zpg: {first} (rolled back)"));
-            }
+        // A failing statement is underlined, so the message needs only its first line.
+        if let Ok(Err(e)) = &ran
+            && !running::cancelled(&e.message)
+        {
+            let issue = error_issue(&text, ranges[e.stmt].clone(), e.position, e.message.clone());
+            self.failed.insert(key.to_string(), issue);
+            self.publish(conn, key)?;
+            let first = e.message.lines().next().unwrap_or("");
+            return show(conn, MessageType::ERROR, format!("zpg: {first} (rolled back)"));
+        }
+        let Some(outcomes) = self.outcomes(conn, ran)? else {
+            return Ok(());
         };
         let millis = started.elapsed().as_millis();
         self.failed.remove(key);
@@ -264,28 +264,39 @@ impl Server {
         self.record_history(conn, &path, conn_name, &stmts, &format!("{} · {millis} ms", tags.join("; ")))?;
         if tags.iter().any(|t| t.starts_with("CREATE") || t.starts_with("DROP") || t.starts_with("ALTER")) {
             self.schemas.clear();
-            let catalogs: Vec<String> = self
-                .docs
-                .iter()
-                .filter(|(_, d)| d.kind() == Kind::Catalog)
-                .map(|(k, _)| k.clone())
-                .collect();
-            for k in catalogs {
-                self.refresh_catalog(conn, &k)?;
-            }
+            self.refresh_catalogs(conn)?;
         }
 
         let Some((k, out)) = outcomes.iter().enumerate().rev().find(|(_, o)| !o.columns.is_empty()) else {
             return Ok(());
         };
-        let root = self.zpg_root(&path);
-        state::ensure_root(&root)?;
-        let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "query".into());
-        let target = root
-            .join(encode_name(conn_name))
-            .join("results")
-            .join(format!("{}.pgres", encode_name(&stem)));
+        let target = self.result_path(&path, conn_name, "pgres")?;
         self.show_result(conn, conn_name, stmts[k], out, millis, &target)
+    }
+
+    /// `.zpg/<conn>/results/<name of the .sql file>.<ext>` for what ran from `from`.
+    fn result_path(&self, from: &Path, conn_name: &str, ext: &str) -> Res<PathBuf> {
+        let root = self.zpg_root(from);
+        state::ensure_root(&root)?;
+        let stem = from.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "query".into());
+        Ok(root.join(encode_name(conn_name)).join("results").join(format!("{}.{ext}", encode_name(&stem))))
+    }
+
+    /// The outcomes of a [`Self::cancellable`] `db::run`, or `None` after
+    /// telling the user why there are none.
+    pub(super) fn outcomes(
+        &self,
+        conn: &Connection,
+        ran: Result<Result<Vec<db::Outcome>, db::RunError>, String>,
+    ) -> Res<Option<Vec<db::Outcome>>> {
+        let (typ, message) = match ran {
+            Ok(Ok(o)) => return Ok(Some(o)),
+            Ok(Err(e)) if running::cancelled(&e.message) => (MessageType::INFO, "zpg: cancelled (rolled back)".into()),
+            Ok(Err(e)) => (MessageType::ERROR, format!("zpg: {} (rolled back)", e.message)),
+            Err(e) => (MessageType::ERROR, format!("zpg: {e}")),
+        };
+        show(conn, typ, message)?;
+        Ok(None)
     }
 
     /// Writes the rows of `sql` as the `.pgres` at `target` and opens it.
@@ -462,14 +473,10 @@ impl Server {
         let ran = self.cancellable(conn, conn_name, &format!("Explaining on {conn_name}"), |c| {
             db::run(c, &[&sql], read_only, MAX_PLAN_LINES, timeout, analyze)
         })?;
-        let plan = match ran {
-            Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),
-            Ok(Ok(mut o)) => o.remove(0).rows,
-            Ok(Err(e)) if running::cancelled(&e.message) => {
-                return show(conn, MessageType::INFO, "zpg: cancelled (rolled back)".into());
-            }
-            Ok(Err(e)) => return show(conn, MessageType::ERROR, format!("zpg: {} (rolled back)", e.message)),
+        let Some(mut outcomes) = self.outcomes(conn, ran)? else {
+            return Ok(());
         };
+        let plan = outcomes.remove(0).rows;
         let millis = started.elapsed().as_millis();
         let first = stmt.lines().next().unwrap_or("");
         let mut out = format!(
@@ -482,13 +489,7 @@ impl Server {
             out += row.first().and_then(|v| v.as_deref()).unwrap_or("");
             out.push('\n');
         }
-        let root = self.zpg_root(&path);
-        state::ensure_root(&root)?;
-        let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "query".into());
-        let target = root
-            .join(encode_name(conn_name))
-            .join("results")
-            .join(format!("{}.plan.txt", encode_name(&stem)));
+        let target = self.result_path(&path, conn_name, "plan.txt")?;
         self.write_file(conn, &target, out)?;
         self.show_document(conn, &target)
     }
@@ -514,14 +515,10 @@ impl Server {
         let ran = self.cancellable(conn, &st.conn, &format!("Running on {}", st.conn), |c| {
             db::run(c, &[&st.sql], read_only, max_rows, timeout, false)
         })?;
-        let out = match ran {
-            Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),
-            Ok(Ok(mut o)) => o.remove(0),
-            Ok(Err(e)) if running::cancelled(&e.message) => {
-                return show(conn, MessageType::INFO, "zpg: cancelled (rolled back)".into());
-            }
-            Ok(Err(e)) => return show(conn, MessageType::ERROR, format!("zpg: {} (rolled back)", e.message)),
+        let Some(mut outcomes) = self.outcomes(conn, ran)? else {
+            return Ok(());
         };
+        let out = outcomes.remove(0);
         let millis = started.elapsed().as_millis();
         self.record_history(conn, &path, &st.conn, &[&st.sql], &format!("{} · {millis} ms", out.tag))?;
         let new = ResultState {
@@ -586,10 +583,8 @@ impl Server {
             format!("({}) IN ({sub})", table_keys.join(", "))
         };
         let query = Query {
-            page: 1,
             filter,
-            order: String::new(),
-            limit: page.query.limit,
+            ..Query::first(page.query.limit)
         };
         let d = self.defaults(&st.conn, query, page.width, page.apply, edit.columns.clone());
         let loaded = match self.load_table(&target, &st.conn, &edit.table, &d) {
@@ -681,13 +676,7 @@ impl Server {
             let cut = st.snap.cell(i, &r.values[i], &st.snap.widths()).1;
             md += &super::values::value_md(v, &col.type_name, cut);
         }
-        Some(Hover {
-            contents: HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: md,
-            }),
-            range: None,
-        })
+        Some(markdown_hover(md))
     }
 }
 
@@ -699,9 +688,6 @@ const RUN: &str = "Run";
 /// Files with more statements aren't checked: one round trip each.
 const MAX_CHECKED: usize = 300;
 
-/// Arguments of the run command: bytes `start..end` of the buffer, and the
-/// hash of the text they held when the command was made, so that a stale
-/// command can find its statement again (see `relocate`).
 /// What waits for the user's *Run*.
 pub(super) enum Pending {
     /// Running statements of a `.sql` buffer.
@@ -710,6 +696,9 @@ pub(super) enum Pending {
     Terminate(String, i32),
 }
 
+/// Arguments of the run command: bytes `start..end` of the buffer, and the
+/// hash of the text they held when the command was made, so that a stale
+/// command can find its statement again (see `relocate`).
 #[derive(Clone)]
 pub(super) struct RunTarget {
     start: usize,
@@ -824,11 +813,7 @@ fn result_snapshot(conn: &str, cols: &[ResultCol], rows: &[Vec<Option<String>>],
             .map(|c| Column {
                 name: c.name.clone(),
                 type_name: c.type_name.clone(),
-                not_null: false,
-                has_default: false,
-                generated: false,
-                enum_values: vec![],
-                comment: None,
+                ..Default::default()
             })
             .collect(),
         pk: vec![],
@@ -836,12 +821,7 @@ fn result_snapshot(conn: &str, cols: &[ResultCol], rows: &[Vec<Option<String>>],
         referenced_by: vec![],
         total: None,
         read_only: Some("query result; use “Edit rows in table” to change rows".into()),
-        query: Query {
-            page: 1,
-            limit: rows.len() as u32,
-            filter: String::new(),
-            order: String::new(),
-        },
+        query: Query::first(rows.len() as u32),
         width,
         apply: Apply::Manual,
         visible: vec![],

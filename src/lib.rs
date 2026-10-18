@@ -104,7 +104,6 @@ impl zed::Extension for ZpgExtension {
             env: worktree.shell_env(),
         })
     }
-
 }
 
 zed::register_extension!(ZpgExtension);

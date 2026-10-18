@@ -43,11 +43,10 @@ impl Server {
         let ran = self.cancellable(conn, &conn_name, &format!("Reading activity of {conn_name}"), |c| {
             db::run(c, &[ACTIVITY_SQL], true, max_rows, timeout, false)
         })?;
-        let out = match ran {
-            Ok(Ok(mut o)) => o.remove(0),
-            Ok(Err(e)) => return show(conn, MessageType::ERROR, format!("zpg: {}", e.message)),
-            Err(e) => return show(conn, MessageType::ERROR, format!("zpg: {e}")),
+        let Some(mut outcomes) = self.outcomes(conn, ran)? else {
+            return Ok(());
         };
+        let out = outcomes.remove(0);
         let millis = started.elapsed().as_millis();
         let target = root.join(encode_name(&conn_name)).join("activity.pgres");
         self.show_result(conn, &conn_name, ACTIVITY_SQL, &out, millis, &target)

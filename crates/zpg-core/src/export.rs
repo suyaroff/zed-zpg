@@ -1,7 +1,7 @@
 //! Loaded rows as CSV, JSON or INSERT statements. Values come as Postgres
 //! text output; `None` is NULL.
 
-use crate::header::{QualName, display_ident};
+use crate::header::{QualName, display_ident, quote_literal};
 
 type Row = Vec<Option<String>>;
 
@@ -83,7 +83,7 @@ pub fn json(names: &[String], types: &[String], rows: &[Row]) -> String {
 fn literal(v: &Option<String>) -> String {
     match v {
         None => "NULL".into(),
-        Some(s) => format!("'{}'", s.replace('\'', "''")),
+        Some(s) => quote_literal(s),
     }
 }
 

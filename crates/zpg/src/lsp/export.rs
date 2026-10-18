@@ -7,12 +7,9 @@ use lsp_types::{CodeActionOrCommand, MessageType};
 use serde_json::Value;
 use zpg_core::export;
 
-use super::{CMD_EXPORT, Kind, Res, Server, command, encode_name, running, show, snapshot};
+use super::{CMD_EXPORT, Kind, MAX_OPEN, Res, Server, command, encode_name, running, show, snapshot};
 use crate::db;
 use crate::state;
-
-/// Bigger exports are written but not opened in the editor.
-const MAX_OPEN: u64 = 20 << 20;
 
 /// *Export* actions for a table page or a result.
 pub(super) fn actions(key: &str, kind: Kind) -> Vec<CodeActionOrCommand> {

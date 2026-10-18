@@ -38,7 +38,7 @@ use serde_json::Value;
 use zpg_core::catalog::{self, Section};
 use zpg_core::cell::{self, Value as CellValue};
 use zpg_core::diff::{self, Diff, Source};
-use zpg_core::header::display_ident;
+use zpg_core::header::{display_ident, encode_name, quote_literal};
 use zpg_core::sqlctx::{self, Schema};
 use zpg_core::table::{self, Parsed};
 use zpg_core::{Apply, ForeignKey, Issue, QualName, Query, Severity, Snapshot, Total, record, sql};
@@ -68,6 +68,9 @@ const CMD_FILTER: &str = "zpg.filter";
 const CMD_ACTIVITY: &str = "zpg.activity";
 const CMD_SIGNAL: &str = "zpg.signal";
 const CMD_BACKUP: &str = "zpg.backup";
+
+/// Bigger exports and backups are written but not opened in the editor.
+const MAX_OPEN: u64 = 20 << 20;
 
 /// How `refresh` changes the page it reloads.
 enum Reload {
@@ -343,19 +346,6 @@ fn path_to_uri(path: &Path) -> Res<Uri> {
     Ok(out.parse()?)
 }
 
-/// A file name for arbitrary text.
-fn encode_name(s: &str) -> String {
-    s.chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '_' || c == '-' {
-                c.to_string()
-            } else {
-                c.to_string().bytes().map(|b| format!("%{b:02X}")).collect()
-            }
-        })
-        .collect()
-}
-
 /// File name of a row's `.pgr`: its key, shortened with a hash when long.
 fn row_file(key: &[Option<String>]) -> String {
     let text = key.iter().map(|v| v.as_deref().unwrap_or("NULL")).collect::<Vec<_>>().join(",");
@@ -382,8 +372,14 @@ fn table_of_row(row_path: &Path) -> Option<PathBuf> {
     Some(row_path.parent()?.with_extension("pgt"))
 }
 
-fn sql_literal(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "''"))
+fn markdown_hover(md: String) -> Hover {
+    Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: md,
+        }),
+        range: None,
+    }
 }
 
 fn notify<N: lsp_types::notification::Notification>(conn: &Connection, params: N::Params) -> Res<()> {
@@ -533,15 +529,7 @@ impl Server {
                 self.settings = s;
                 self.db.clear();
                 self.schemas.clear();
-                let catalogs: Vec<String> = self
-                    .docs
-                    .iter()
-                    .filter(|(_, d)| d.kind() == Kind::Catalog)
-                    .map(|(k, _)| k.clone())
-                    .collect();
-                for key in catalogs {
-                    self.refresh_catalog(conn, &key)?;
-                }
+                self.refresh_catalogs(conn)?;
             }
             Err(e) => show(conn, MessageType::ERROR, format!("zpg: {e}"))?,
         }
@@ -881,6 +869,20 @@ impl Server {
         self.replace_doc(conn, key, catalog::render(&sections))
     }
 
+    /// Re-reads every open catalog.
+    fn refresh_catalogs(&mut self, conn: &Connection) -> Res<()> {
+        let keys: Vec<String> = self
+            .docs
+            .iter()
+            .filter(|(_, d)| d.kind() == Kind::Catalog)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in keys {
+            self.refresh_catalog(conn, &key)?;
+        }
+        Ok(())
+    }
+
     fn defaults(&self, conn: &str, query: Query, width: u32, apply: Apply, visible: Vec<String>) -> Defaults {
         Defaults {
             query,
@@ -912,12 +914,7 @@ impl Server {
         if path.exists() && snapshot(&mut self.snaps, &path).is_some() {
             return Ok(path);
         }
-        let query = Query {
-            page: 1,
-            limit: self.settings.page_size,
-            filter: String::new(),
-            order: String::new(),
-        };
+        let query = Query::first(self.settings.page_size);
         let d = self.defaults(conn, query, self.settings.max_cell_width, self.settings.apply.into(), vec![]);
         let snap = self.load_table(&path, conn, table, &d)?;
         state::atomic_write(&path, snap.render().as_bytes())?;
@@ -976,8 +973,7 @@ impl Server {
                 let Some(fk) = snap.foreign_keys.iter().find(|f| f.columns.contains(&field.col)) else {
                     return Ok(None);
                 };
-                let value_of = |c: usize| parsed.fields.iter().find(|f| f.col == c).and_then(|f| f.value.clone().ok());
-                let Some(values) = cell_texts(&fk.columns, value_of) else {
+                let Some(values) = cell_texts(&fk.columns, |c| parsed.value_of(c)) else {
                     return Ok(None);
                 };
                 let Some(table_path) = table_of_row(&path) else {
@@ -1018,11 +1014,10 @@ impl Server {
             }
             Kind::Row => {
                 let parsed = record::parse(&text, &snap);
-                let value_of = |c: usize| parsed.fields.iter().find(|f| f.col == c).and_then(|f| f.value.clone().ok());
                 let Some(from) = table_of_row(&path) else {
                     return Ok(None);
                 };
-                (from, cell_texts(&b.ref_columns, value_of))
+                (from, cell_texts(&b.ref_columns, |c| parsed.value_of(c)))
             }
             _ => return Ok(None),
         };
@@ -1056,7 +1051,7 @@ impl Server {
         let filter = columns
             .iter()
             .zip(values)
-            .map(|(c, v)| format!("{} = {}", display_ident(c), sql_literal(v)))
+            .map(|(c, v)| format!("{} = {}", display_ident(c), quote_literal(v)))
             .collect::<Vec<_>>()
             .join(" AND ");
         let query = Query {
@@ -1493,23 +1488,16 @@ impl Server {
                 if let Ok(CellValue::Text(v)) = &field.value {
                     md += &values::value_md(v, &snap.columns[field.col].type_name, false);
                 }
-                if let Some(fk) = snap.foreign_keys.iter().find(|f| f.columns.contains(&field.col)) {
-                    let value_of = |c: usize| parsed.fields.iter().find(|f| f.col == c).and_then(|f| f.value.clone().ok());
-                    if let Some(values) = cell_texts(&fk.columns, value_of) {
-                        md += &self.referenced_md(&snap, fk, &values);
-                    }
+                if let Some(fk) = snap.foreign_keys.iter().find(|f| f.columns.contains(&field.col))
+                    && let Some(values) = cell_texts(&fk.columns, |c| parsed.value_of(c))
+                {
+                    md += &self.referenced_md(&snap, fk, &values);
                 }
                 md
             }
             _ => return None,
         };
-        Some(Hover {
-            contents: HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: md,
-            }),
-            range: None,
-        })
+        Some(markdown_hover(md))
     }
 
     fn completion(&mut self, key: &str, pos: Position) -> Vec<lsp_types::CompletionItem> {
@@ -1788,11 +1776,11 @@ impl Server {
                 }
                 if !parsed.has_errors() {
                     let cells_of = |line: u32| parsed.rows.iter().find(|r| r.line == line).map(|r| &r.cells);
+                    let shown = snap.shown();
                     for op in diff::diff(&parsed, snap).ops {
                         match op {
                             diff::Op::Update { line, sets, .. } => {
                                 if let Some(cells) = cells_of(line) {
-                                    let shown = snap.shown();
                                     for (col, _) in &sets {
                                         if let Some(c) = shown.iter().position(|s| s == col).and_then(|k| cells.get(k)) {
                                             spans.push((line, c.start, c.end, TOKEN_MODIFIED));
@@ -1837,7 +1825,7 @@ impl Server {
         let text = doc.text.clone();
         let mut issues = vec![];
         let path = doc.path();
-        let no_state = |what: &str| Issue::error(0, 0, 8, format!("no saved state for this file; open it from {what}"));
+        let no_state = |what: &str| Issue::header(format!("no saved state for this file; open it from {what}"));
         match (kind, path) {
             (Kind::Table, Some(path)) => {
                 let parsed = table::parse(&text);
@@ -1848,17 +1836,15 @@ impl Server {
                         if let Some(h) = &parsed.header
                             && (h.conn != snap.conn || h.table != snap.table)
                         {
-                            issues.push(Issue::error(
-                                0,
-                                0,
-                                8,
-                                format!("`conn` and `table` must stay {} / {}", snap.conn, snap.table),
-                            ));
+                            issues.push(Issue::header(format!(
+                                "`conn` and `table` must stay {} / {}",
+                                snap.conn, snap.table
+                            )));
                         }
                         if let Some(h) = &parsed.header {
                             let unknown = snap.unknown_visible(&h.columns);
                             if !unknown.is_empty() {
-                                issues.push(Issue::error(0, 0, 8, format!("`columns`: no such column {}", unknown.join(", "))));
+                                issues.push(Issue::header(format!("`columns`: no such column {}", unknown.join(", "))));
                             }
                         }
                         let d = diff::diff(&parsed, snap);
@@ -1929,7 +1915,6 @@ impl Server {
     }
 }
 
-/// LSP's relative encoding of (line, start, end, type) spans.
 /// Longest value offered as a filter.
 const MAX_FILTER_VALUE: usize = 200;
 
@@ -1967,8 +1952,8 @@ fn filter_actions(snap: &Snapshot, key: &str, line: &str, ch: u32) -> Vec<CodeAc
             let shown: String = v.chars().take(30).collect();
             let shown = if shown.len() < v.len() { format!("{shown}…") } else { shown };
             vec![
-                (format!("{lhs} = {}", sql_literal(v)), format!("{name} = '{shown}'")),
-                (format!("{lhs} <> {}", sql_literal(v)), format!("{name} <> '{shown}'")),
+                (format!("{lhs} = {}", quote_literal(v)), format!("{name} = '{shown}'")),
+                (format!("{lhs} <> {}", quote_literal(v)), format!("{name} <> '{shown}'")),
             ]
         }
         Some(_) => vec![],
@@ -2007,6 +1992,7 @@ fn backref_actions(snap: &Snapshot, key: &str, line: u32) -> Vec<CodeActionOrCom
         .collect()
 }
 
+/// LSP's relative encoding of (line, start, end, type) spans.
 fn encode_tokens(mut spans: Vec<(u32, u32, u32, u32)>) -> Vec<SemanticToken> {
     spans.retain(|s| s.2 > s.1);
     spans.sort();
@@ -2030,16 +2016,10 @@ fn encode_tokens(mut spans: Vec<(u32, u32, u32, u32)>) -> Vec<SemanticToken> {
 fn pending(d: &Diff, manual: bool) -> Vec<Issue> {
     let mut out = d.issues.clone();
     if !d.ops.is_empty() && !d.issues.iter().any(|i| i.severity == Severity::Error) {
+        let how = if manual { "run the code action “Apply changes”" } else { "save to write them" };
         out.push(Issue {
-            line: 0,
-            start: 0,
-            end: 8,
             severity: Severity::Info,
-            message: format!(
-                "pending: {}; {}",
-                d.summary(),
-                if manual { "run the code action “Apply changes”" } else { "save to write them" }
-            ),
+            ..Issue::header(format!("pending: {}; {how}", d.summary()))
         });
     }
     out

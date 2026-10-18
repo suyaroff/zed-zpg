@@ -10,10 +10,7 @@ use lsp_server::Connection;
 use lsp_types::MessageType;
 use zpg_core::{QualName, catalog};
 
-use super::{Kind, Res, Server, encode_name, show, snapshot};
-
-/// Bigger backups are written but not opened in the editor.
-const MAX_OPEN: u64 = 20 << 20;
+use super::{Kind, MAX_OPEN, Res, Server, encode_name, show, snapshot};
 
 /// The file extension for `pg_dump`'s output format among `args`; the
 /// directory format can't go to one file.

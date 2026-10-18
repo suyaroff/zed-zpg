@@ -14,6 +14,24 @@ pub fn quote_ident(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
 }
 
+/// A SQL string literal.
+pub fn quote_literal(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+/// `s` usable as a file name: anything but letters, digits, `_` and `-` is `%XX`-encoded.
+pub fn encode_name(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' || c == '-' {
+                c.to_string()
+            } else {
+                c.to_string().bytes().map(|b| format!("%{b:02X}")).collect()
+            }
+        })
+        .collect()
+}
+
 /// Quotes only when Postgres would otherwise fold case or reject the name.
 pub fn display_ident(s: &str) -> String {
     let mut chars = s.chars();
@@ -46,18 +64,7 @@ impl QualName {
     }
 
     pub fn file_stem(&self) -> String {
-        let enc = |s: &str| {
-            s.chars()
-                .map(|c| {
-                    if c.is_alphanumeric() || c == '_' || c == '-' {
-                        c.to_string()
-                    } else {
-                        c.to_string().bytes().map(|b| format!("%{b:02X}")).collect()
-                    }
-                })
-                .collect::<String>()
-        };
-        format!("{}.{}", enc(&self.schema), enc(&self.name))
+        format!("{}.{}", encode_name(&self.schema), encode_name(&self.name))
     }
 }
 
@@ -134,6 +141,16 @@ pub struct Query {
 }
 
 impl Query {
+    /// The first page of `limit` rows, unfiltered and in key order.
+    pub fn first(limit: u32) -> Self {
+        Self {
+            page: 1,
+            limit,
+            filter: String::new(),
+            order: String::new(),
+        }
+    }
+
     pub fn offset(&self) -> u64 {
         u64::from(self.page.saturating_sub(1)) * u64::from(self.limit)
     }
@@ -315,12 +332,7 @@ impl TableHeader {
             conn: String::new(),
             table: QualName::new("", ""),
             pk: String::new(),
-            query: Query {
-                page: 1,
-                limit: 100,
-                filter: String::new(),
-                order: String::new(),
-            },
+            query: Query::first(100),
             width: 40,
             apply: Apply::Manual,
             columns: vec![],

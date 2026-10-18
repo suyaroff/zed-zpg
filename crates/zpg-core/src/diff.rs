@@ -125,7 +125,7 @@ pub fn diff(parsed: &Parsed, snap: &Snapshot) -> Diff {
                 r.cells.iter().zip(&shown).all(|(c, &i)| c.text == snap.cell(i, &s.values[i], &widths).0)
             });
         if !same {
-            d.issues.push(Issue::error(0, 0, 8, format!("read-only: {why}; edits won't be saved")));
+            d.issues.push(Issue::header(format!("read-only: {why}; edits won't be saved")));
         }
         d.order = (0..snap.rows.len()).map(Source::Snapshot).collect();
         return d;
@@ -260,11 +260,8 @@ mod tests {
         Column {
             name: name.into(),
             type_name: "text".into(),
-            not_null: false,
             has_default,
-            generated: false,
-            enum_values: vec![],
-            comment: None,
+            ..Default::default()
         }
     }
 
@@ -282,12 +279,7 @@ mod tests {
             referenced_by: vec![],
             total: None,
             read_only: None,
-            query: Query {
-                page: 1,
-                limit: 100,
-                filter: String::new(),
-                order: String::new(),
-            },
+            query: Query::first(100),
             width: 10,
             apply: Apply::Save,
             visible: vec![],

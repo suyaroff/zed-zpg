@@ -52,10 +52,7 @@ fn run(cli: Cli) -> Result<(), String> {
     match cli.cmd {
         Cmd::Open { dir, zed } => {
             let root = dir.join(".zpg");
-            let ignore = root.join(".gitignore");
-            if !ignore.exists() {
-                state::atomic_write(&ignore, b"*\n")?;
-            }
+            state::ensure_root(&root)?;
             let path = root.join("catalog.pgdb");
             if !path.exists() {
                 // The language server fills it in when Zed opens it.

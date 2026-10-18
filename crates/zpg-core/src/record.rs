@@ -118,6 +118,11 @@ pub struct ParsedRow {
 }
 
 impl ParsedRow {
+    /// The parsed value of column `col`, if its field parsed.
+    pub fn value_of(&self, col: usize) -> Option<Value> {
+        self.fields.iter().find(|f| f.col == col).and_then(|f| f.value.clone().ok())
+    }
+
     pub fn field_at(&self, line: u32) -> Option<&Field> {
         self.fields
             .iter()
@@ -222,7 +227,7 @@ pub fn diff(parsed: &ParsedRow, snap: &Snapshot) -> Diff {
     if let Some(h) = &parsed.header
         && (h.conn != snap.conn || h.table != snap.table)
     {
-        d.issues.push(Issue::error(0, 0, 8, format!("`conn` and `table` must stay {} / {}", snap.conn, snap.table)));
+        d.issues.push(Issue::header(format!("`conn` and `table` must stay {} / {}", snap.conn, snap.table)));
     }
     let mut sets = vec![];
     let mut first_line = None;
@@ -270,11 +275,7 @@ mod tests {
         let col = |n: &str| Column {
             name: n.into(),
             type_name: "text".into(),
-            not_null: false,
-            has_default: false,
-            generated: false,
-            enum_values: vec![],
-            comment: None,
+            ..Default::default()
         };
         Snapshot {
             conn: "c".into(),
@@ -285,12 +286,7 @@ mod tests {
             referenced_by: vec![],
             total: None,
             read_only: None,
-            query: Query {
-                page: 1,
-                limit: 1,
-                filter: String::new(),
-                order: String::new(),
-            },
+            query: Query::first(1),
             width: 0,
             apply: Apply::Save,
             visible: vec![],

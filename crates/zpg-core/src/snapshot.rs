@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::cell::{self, Value, display_width};
 use crate::header::{Apply, QualName, Query, TableHeader, Total};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Column {
     pub name: String,
     /// `format_type()` output, usable in `CAST(... AS <type>)`.
