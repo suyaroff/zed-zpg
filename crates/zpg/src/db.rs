@@ -331,8 +331,12 @@ pub fn catalog(c: &mut Client) -> Result<Vec<Relation>, String> {
                     CASE c.relkind WHEN 'r' THEN 'table' WHEN 'p' THEN 'partitioned' WHEN 'v' THEN 'view'
                                    WHEN 'm' THEN 'matview' ELSE 'foreign' END,
                     CASE WHEN c.relkind IN ('r', 'm') THEN
-                        CASE WHEN c.reltuples >= 0 THEN c.reltuples::bigint
-                             ELSE pg_stat_get_live_tuples(c.oid) END
+                        CASE WHEN pg_stat_get_last_analyze_time(c.oid) IS NOT NULL
+                               OR pg_stat_get_last_autoanalyze_time(c.oid) IS NOT NULL
+                               OR pg_stat_get_last_vacuum_time(c.oid) IS NOT NULL
+                               OR pg_stat_get_last_autovacuum_time(c.oid) IS NOT NULL
+                             THEN pg_stat_get_live_tuples(c.oid)
+                             ELSE greatest(c.reltuples, 0)::bigint + pg_stat_get_live_tuples(c.oid) END
                     END
              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
              WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
