@@ -8,7 +8,8 @@ use serde_json::Value;
 use zpg_core::catalog::{self, Section};
 
 use super::{
-    CMD_ACTIVITY, CMD_BACKUP, CMD_CONFIG, CMD_DDL, CMD_DROP, CMD_OPEN, CMD_REFRESH, Kind, Res, Server, command,
+    CMD_ACTIVITY, CMD_BACKUP, CMD_CONFIG, CMD_DATABASES, CMD_DDL, CMD_DROP, CMD_OPEN, CMD_REFRESH, Kind, Res, Server,
+    command,
 };
 use crate::db;
 
@@ -64,6 +65,7 @@ impl Server {
             && let Some(c) = catalog::conn_at(text, line)
         {
             out.push(command(format!("zpg: Server activity of {c}"), CMD_ACTIVITY, vec![arg(), Value::from(line)]));
+            out.push(command(format!("zpg: Databases of {c}"), CMD_DATABASES, vec![arg(), Value::from(line)]));
         }
         out.push(command("zpg: Refresh catalog".into(), CMD_REFRESH, vec![arg()]));
         if self.caps.show_document {

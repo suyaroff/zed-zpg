@@ -26,9 +26,27 @@ FROM pg_stat_activity
 WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()
 ORDER BY state = 'idle', xact_start NULLS LAST";
 
+/// Databases of the server except templates, with what the user may see of their size.
+const DATABASES_SQL: &str = r"SELECT d.datname AS name, pg_get_userbyid(d.datdba) AS owner,
+       pg_encoding_to_char(d.encoding) AS encoding,
+       CASE WHEN has_database_privilege(d.oid, 'CONNECT') THEN pg_size_pretty(pg_database_size(d.oid)) END AS size,
+       (SELECT count(*) FROM pg_stat_activity a WHERE a.datname = d.datname) AS sessions
+FROM pg_database d
+WHERE NOT d.datistemplate
+ORDER BY d.datname";
+
 impl Server {
     /// Opens `.zpg/<conn>/activity.pgres` for the connection of catalog `line`.
     pub(super) fn activity(&mut self, conn: &Connection, key: &str, line: u32) -> Res<()> {
+        self.server_view(conn, key, line, "Reading activity of", ACTIVITY_SQL, "activity.pgres")
+    }
+
+    /// Opens `.zpg/<conn>/databases.pgres` for the connection of catalog `line`.
+    pub(super) fn databases(&mut self, conn: &Connection, key: &str, line: u32) -> Res<()> {
+        self.server_view(conn, key, line, "Listing databases of", DATABASES_SQL, "databases.pgres")
+    }
+
+    fn server_view(&mut self, conn: &Connection, key: &str, line: u32, what: &str, sql: &str, file: &str) -> Res<()> {
         let Some(doc) = self.docs.get(key) else {
             return Ok(());
         };
@@ -40,16 +58,16 @@ impl Server {
         };
         let (max_rows, timeout) = (self.settings.max_result_rows, self.settings.statement_timeout_ms);
         let started = Instant::now();
-        let ran = self.cancellable(conn, &conn_name, &format!("Reading activity of {conn_name}"), |c| {
-            db::run(c, &[ACTIVITY_SQL], true, max_rows, timeout, false)
+        let ran = self.cancellable(conn, &conn_name, &format!("{what} {conn_name}"), |c| {
+            db::run(c, &[sql], true, max_rows, timeout, false)
         })?;
         let Some(mut outcomes) = self.outcomes(conn, ran)? else {
             return Ok(());
         };
         let out = outcomes.remove(0);
         let millis = started.elapsed().as_millis();
-        let target = root.join(encode_name(&conn_name)).join("activity.pgres");
-        self.show_result(conn, &conn_name, ACTIVITY_SQL, &out, millis, &target)
+        let target = root.join(encode_name(&conn_name)).join(file);
+        self.show_result(conn, &conn_name, sql, &out, millis, &target)
     }
 
     /// *Cancel* / *Terminate* for the row on `line` of a result with a `pid` column.
