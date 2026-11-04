@@ -106,7 +106,7 @@ impl Server {
         if let Some(c) = sqlsplit::conn_at(directives, offset) {
             return vec![c];
         }
-        self.settings.connections.keys().cloned().collect()
+        self.settings.active().cloned().collect()
     }
 
     pub(super) fn code_lens(&self, key: &str) -> Vec<CodeLens> {

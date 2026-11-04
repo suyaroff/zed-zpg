@@ -203,6 +203,7 @@
 | `! …` в каталоге | не удалось подключиться | проверьте строку подключения и переменные окружения |
 | `…/config.json: …` | ошибка в файле настроек | исправьте место из сообщения; до этого действуют прежние настройки |
 | ``no connection `x` in …`` | в файле подключение, которого нет в настройках | добавьте его в `~/.config/zpg/config.json` |
+| ``connection `x` is disabled (`enabled: false` in …)`` | `-- @conn x` или открытая таблица относятся к отключённому подключению | уберите `"enabled": false`, см. [Отключить подключение](02-connections.md#отключить-подключение) |
 | `environment variable X is not set` | в URL есть `${X}`, а переменной нет | задайте переменную и перезапустите Zed |
 | `error communicating with the server`, `terminating connection…` при записи или запуске SQL | соединение оборвалось во время выполнения | нажмите ещё раз — zpg подключится заново; чтение повторяется само, см. [Обрыв соединения](02-connections.md#обрыв-соединения) |
 | `invalid peer certificate: UnknownIssuer` | `verify-ca`/`verify-full`, а сертификат подписан не доверенным CA | укажите CA в `sslrootcert`, см. [TLS](02-connections.md#tls-и-проверка-сертификата); или `sslmode=require` — без проверки |

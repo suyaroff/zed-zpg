@@ -15,7 +15,7 @@ use crate::db;
 impl Server {
     pub(super) fn refresh_catalog(&mut self, conn: &Connection, key: &str) -> Res<()> {
         self.schemas.clear();
-        let names: Vec<String> = self.settings.connections.keys().cloned().collect();
+        let names: Vec<String> = self.settings.active().cloned().collect();
         let sections: Vec<Section> = names
             .into_iter()
             .map(|name| {

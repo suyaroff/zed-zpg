@@ -12,6 +12,8 @@ pub enum ConnSpec {
     Url(String),
     Full {
         url: String,
+        #[serde(default = "yes")]
+        enabled: bool,
         #[serde(default)]
         read_only: bool,
         /// `user@host` or a `~/.ssh/config` alias to tunnel through; the url
@@ -24,11 +26,19 @@ pub enum ConnSpec {
     },
 }
 
+fn yes() -> bool {
+    true
+}
+
 impl ConnSpec {
     pub fn url(&self) -> &str {
         match self {
             ConnSpec::Url(u) | ConnSpec::Full { url: u, .. } => u,
         }
+    }
+
+    pub fn enabled(&self) -> bool {
+        !matches!(self, ConnSpec::Full { enabled: false, .. })
     }
 
     pub fn read_only(&self) -> bool {
@@ -96,6 +106,11 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// Names of the connections that are not switched off with `"enabled": false`.
+    pub fn active(&self) -> impl Iterator<Item = &String> {
+        self.connections.iter().filter(|(_, c)| c.enabled()).map(|(n, _)| n)
+    }
+
     pub fn parse(text: &str) -> Result<Self, String> {
         let mut s: Self = serde_json::from_str(&strip_jsonc(text)).map_err(|e| e.to_string())?;
         s.page_size = s.page_size.clamp(1, 10_000);
@@ -112,6 +127,7 @@ pub const TEMPLATE: &str = r#"// zpg settings, shared by all projects. Keep this
     // "prod": { "url": "postgresql://app:secret@db.example.com/app", "read_only": true },
     // "cloud": "postgresql://app:${CLOUD_PG_PASSWORD}@db.example.com/app?sslmode=verify-full",
     // "remote": { "url": "postgresql:///app?host=/var/run/postgresql", "ssh": "deploy@prod", "ssh_options": ["-p", "2222"] },
+    // "off": { "url": "postgresql:///old", "enabled": false },
   },
   // "page_size": 100,
   // "max_cell_width": 40,
@@ -254,6 +270,7 @@ mod tests {
                 "local": "postgresql:///app", /* inline */
                 "prod": { "url": "postgresql://u:${PW}@db/app?x=//y", "read_only": true },
                 "remote": { "url": "postgresql:///app?host=/var/run/postgresql", "ssh": "deploy@srv", "ssh_options": ["-p", "2222",] },
+                "old": { "url": "postgresql:///old", "enabled": false },
               },
               "page_size": 50,
             }"#,
@@ -262,6 +279,9 @@ mod tests {
         assert_eq!(s.connections["local"].url(), "postgresql:///app");
         assert_eq!(s.connections["prod"].url(), "postgresql://u:${PW}@db/app?x=//y");
         assert!(s.connections["prod"].read_only());
+        assert!(s.connections["prod"].enabled() && s.connections["local"].enabled());
+        assert!(!s.connections["old"].enabled());
+        assert_eq!(s.active().map(String::as_str).collect::<Vec<_>>(), ["local", "prod", "remote"]);
         assert!(s.connections["prod"].ssh().is_none());
         let (target, opts) = s.connections["remote"].ssh().unwrap();
         assert_eq!((target, opts.len()), ("deploy@srv", 2));
@@ -277,7 +297,7 @@ mod tests {
         // Uncommenting any example line keeps it valid.
         let all = TEMPLATE.replace("    // \"", "    \"").replace("  // \"", "  \"");
         let s = Settings::parse(&all).unwrap();
-        assert_eq!(s.connections.len(), 4);
+        assert_eq!(s.connections.len(), 5);
         assert_eq!(s.statement_timeout_ms, 60_000);
     }
 

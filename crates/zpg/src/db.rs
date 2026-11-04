@@ -294,6 +294,10 @@ impl Db {
             let file = config_path().map_or("the zpg settings file".into(), |p| p.display().to_string());
             format!("no connection `{conn}` in {file}")
         })?;
+        if !spec.enabled() {
+            let file = config_path().map_or("the zpg settings file".into(), |p| p.display().to_string());
+            return Err(format!("connection `{conn}` is disabled (`enabled: false` in {file})"));
+        }
         // A dead tunnel means a dead connection, even before a query notices.
         let alive = self
             .sessions
