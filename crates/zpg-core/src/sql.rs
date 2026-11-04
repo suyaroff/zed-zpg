@@ -14,10 +14,15 @@ pub struct Stmt {
 }
 
 /// Result columns shared by SELECT and RETURNING: xmin, then every column, as text.
-fn returning(columns: &[Column], has_xmin: bool) -> String {
+/// `alias` renames them to `_0, _1, ...`: a bare name in ORDER BY resolves to an output
+/// column first, so without it `ORDER BY "id"` would sort the text cast, not the integer.
+fn returning(columns: &[Column], has_xmin: bool, alias: bool) -> String {
     let mut s = String::from(if has_xmin { "xmin::text" } else { "NULL::text" });
-    for c in columns {
+    for (i, c) in columns.iter().enumerate() {
         s += &format!(", {}::text", quote_ident(&c.name));
+        if alias {
+            s += &format!(" AS _{i}");
+        }
     }
     s
 }
@@ -75,7 +80,7 @@ fn order_clause(snap: &Snapshot, q: &Query) -> String {
 }
 
 pub fn select_page(snap: &Snapshot, has_xmin: bool, q: &Query) -> Stmt {
-    let mut sql = format!("SELECT {} FROM {}", returning(&snap.columns, has_xmin), snap.table.sql());
+    let mut sql = format!("SELECT {} FROM {}", returning(&snap.columns, has_xmin, true), snap.table.sql());
     sql += &filter_clause(q);
     sql += &order_clause(snap, q);
     sql += &format!(" LIMIT {} OFFSET {}", q.limit, q.offset());
@@ -132,7 +137,7 @@ pub fn select_row(snap: &Snapshot, key: &[Option<String>], pretty: bool) -> Stmt
 pub fn for_op(snap: &Snapshot, op: &Op) -> Stmt {
     let mut b = Builder { params: vec![] };
     let table = snap.table.sql();
-    let ret = returning(&snap.columns, true);
+    let ret = returning(&snap.columns, true, false);
     let sql = match op {
         Op::Update { row, sets, .. } => {
             let sets: Vec<String> = sets
@@ -210,7 +215,7 @@ mod tests {
         let s = snap();
         assert_eq!(
             select_page(&s, true, &s.query).sql,
-            r#"SELECT xmin::text, "id"::text, "na""me"::text FROM "public"."T" ORDER BY "id" LIMIT 10 OFFSET 10"#
+            r#"SELECT xmin::text, "id"::text AS _0, "na""me"::text AS _1 FROM "public"."T" ORDER BY "id" LIMIT 10 OFFSET 10"#
         );
         let up = for_op(&s, &Op::Update { line: 3, row: 0, sets: vec![(1, Value::Text("it's".into()))] });
         assert_eq!(
