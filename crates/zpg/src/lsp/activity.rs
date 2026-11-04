@@ -35,6 +35,16 @@ FROM pg_database d
 WHERE NOT d.datistemplate
 ORDER BY d.datname";
 
+/// Schemas the catalog could show, with how many of their relations the user may read.
+const SCHEMAS_SQL: &str = r"SELECT n.nspname AS name, pg_get_userbyid(n.nspowner) AS owner,
+       count(c.oid) AS relations,
+       count(c.oid) FILTER (WHERE has_table_privilege(c.oid, 'SELECT')) AS readable
+FROM pg_namespace n
+LEFT JOIN pg_class c ON c.relnamespace = n.oid AND c.relkind IN ('r', 'p', 'v', 'm', 'f') AND NOT c.relispartition
+WHERE n.nspname <> 'information_schema' AND n.nspname !~ '^pg_'
+GROUP BY n.oid, n.nspname, n.nspowner
+ORDER BY n.nspname";
+
 impl Server {
     /// Opens `.zpg/<conn>/activity.pgres` for the connection of catalog `line`.
     pub(super) fn activity(&mut self, conn: &Connection, key: &str, line: u32) -> Res<()> {
@@ -44,6 +54,11 @@ impl Server {
     /// Opens `.zpg/<conn>/databases.pgres` for the connection of catalog `line`.
     pub(super) fn databases(&mut self, conn: &Connection, key: &str, line: u32) -> Res<()> {
         self.server_view(conn, key, line, "Listing databases of", DATABASES_SQL, "databases.pgres")
+    }
+
+    /// Opens `.zpg/<conn>/schemas.pgres` for the connection of catalog `line`.
+    pub(super) fn schemas(&mut self, conn: &Connection, key: &str, line: u32) -> Res<()> {
+        self.server_view(conn, key, line, "Listing schemas of", SCHEMAS_SQL, "schemas.pgres")
     }
 
     fn server_view(&mut self, conn: &Connection, key: &str, line: u32, what: &str, sql: &str, file: &str) -> Res<()> {

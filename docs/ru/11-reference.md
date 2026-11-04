@@ -24,6 +24,7 @@
 | **zpg: Drop \<таблица\>… (opens the SQL to review and run)** | курсор на строке таблицы | открывает файл с `DROP` для проверки и запуска → [Каталог](04-catalog.md#удалить-таблицу) |
 | **zpg: Server activity of \<подключение\>** | строка внутри секции подключения | сессии сервера → [Администрирование](09-admin.md) |
 | **zpg: Databases of \<подключение\>** | строка внутри секции подключения | список баз сервера без шаблонных → [Администрирование](09-admin.md#список-баз) |
+| **zpg: Schemas of \<подключение\>** | строка внутри секции подключения | список схем, включая пустые → [Администрирование](09-admin.md#список-схем) |
 | **zpg: Refresh catalog** | всегда | перечитывает список таблиц |
 | **zpg: Open settings file** | всегда | открывает `~/.config/zpg/config.json` |
 
@@ -94,7 +95,7 @@
 | `zpg.ddl`, `zpg.drop`, `zpg.backup` | Show DDL, Drop, Back up |
 | `zpg.run`, `zpg.rerun`, `zpg.explain`, `zpg.editResult` | запуск, Run again, Explain, Edit rows in table |
 | `zpg.export` | все виды экспорта |
-| `zpg.activity`, `zpg.databases`, `zpg.signal`, `zpg.cancel` | активность, список баз, Cancel/Terminate backend, отмена своего запроса |
+| `zpg.activity`, `zpg.databases`, `zpg.schemas`, `zpg.signal`, `zpg.cancel` | активность, список баз и схем, Cancel/Terminate backend, отмена своего запроса |
 | `zpg.openConfig` | Open settings file |
 
 ## Настройки
@@ -158,6 +159,7 @@
     ├── drop-zpg_demo.orders.sql       # последний Drop…
     ├── activity.pgres                 # активность сервера
     ├── databases.pgres                # список баз сервера
+    ├── schemas.pgres                  # список схем
     ├── backups/
     │   └── zpg_demo.orders-20261018-021333.sql   # бэкапы pg_dump (.sql, .dump, .tar)
     ├── exports/

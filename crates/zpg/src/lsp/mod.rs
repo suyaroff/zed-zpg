@@ -71,6 +71,7 @@ const CMD_EXPORT: &str = "zpg.export";
 const CMD_FILTER: &str = "zpg.filter";
 const CMD_ACTIVITY: &str = "zpg.activity";
 const CMD_DATABASES: &str = "zpg.databases";
+const CMD_SCHEMAS: &str = "zpg.schemas";
 const CMD_SIGNAL: &str = "zpg.signal";
 const CMD_BACKUP: &str = "zpg.backup";
 
@@ -210,6 +211,7 @@ pub fn run() -> Res<()> {
                 running::CMD_CANCEL,
                 CMD_ACTIVITY,
                 CMD_DATABASES,
+                CMD_SCHEMAS,
                 CMD_SIGNAL,
                 CMD_BACKUP,
             ]
@@ -493,6 +495,11 @@ impl Server {
                     CMD_DATABASES => {
                         if let Some(line) = num(1) {
                             self.databases(conn, &key, line)?;
+                        }
+                    }
+                    CMD_SCHEMAS => {
+                        if let Some(line) = num(1) {
+                            self.schemas(conn, &key, line)?;
                         }
                     }
                     CMD_SIGNAL => {
