@@ -29,7 +29,7 @@ use lsp_types::request::{
     HoverRequest, Request as _, SemanticTokensFullRequest, ShowDocument,
 };
 use lsp_types::{
-    ApplyWorkspaceEditParams, CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionProviderCapability,
+    ApplyWorkspaceEditParams, CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionProviderCapability, CodeLens,
     CodeLensOptions, Command, CompletionOptions, CompletionResponse, DocumentChanges, ExecuteCommandOptions,
     GotoDefinitionResponse, Hover, HoverContents, HoverProviderCapability, InitializeParams, Location, MarkupContent,
     MarkupKind, MessageType, OneOf, OptionalVersionedTextDocumentIdentifier, Position, PublishDiagnosticsParams, Range,
@@ -383,12 +383,12 @@ impl Server {
                 };
                 doc.text = change.text;
                 doc.version = p.text_document.version;
-                let sql = doc.kind() == Kind::Sql;
+                let lens = matches!(doc.kind(), Kind::Sql | Kind::Table | Kind::Row);
                 self.failed.remove(&key);
                 self.checked.remove(&key);
                 self.publish(conn, &key)?;
-                // ▶ lenses carry statement offsets; redraw them for the new text.
-                if sql && self.caps.code_lens_refresh {
+                // ▶ lenses carry statement offsets and header lenses depend on pending edits; redraw them.
+                if lens && self.caps.code_lens_refresh {
                     self.send_request::<lsp_types::request::CodeLensRefresh>(conn, ())?;
                 }
             }
@@ -465,7 +465,10 @@ impl Server {
             }
             CodeLensRequest::METHOD => {
                 let p: lsp_types::CodeLensParams = serde_json::from_value(req.params)?;
-                Ok(serde_json::to_value(self.code_lens(p.text_document.uri.as_str()))?)
+                let uri = p.text_document.uri;
+                let mut lenses = self.code_lens(uri.as_str());
+                lenses.extend(self.header_lens(&uri));
+                Ok(serde_json::to_value(lenses)?)
             }
             CodeActionRequest::METHOD => {
                 let p: lsp_types::CodeActionParams = serde_json::from_value(req.params)?;
@@ -696,6 +699,40 @@ impl Server {
             Kind::Row => self.row_completion(&path, &text, pos),
             _ => vec![],
         }
+    }
+
+    /// Buttons above the header line of tables, rows and the catalog: the main code actions as lenses.
+    fn header_lens(&mut self, uri: &Uri) -> Vec<CodeLens> {
+        let Some(kind) = self.docs.get(uri.as_str()).map(Doc::kind) else {
+            return vec![];
+        };
+        let wanted = |a: &CodeAction| {
+            let cmd = a.command.as_ref().map_or("", |c| c.command.as_str());
+            match kind {
+                Kind::Table => {
+                    matches!(cmd, CMD_APPLY | CMD_REFRESH)
+                        || cmd == CMD_PAGE && (a.title.contains("Next page") || a.title.contains("Previous page"))
+                }
+                Kind::Row => matches!(cmd, CMD_APPLY | CMD_REFRESH),
+                Kind::Catalog => matches!(cmd, CMD_REFRESH | CMD_CONFIG),
+                _ => false,
+            }
+        };
+        if !matches!(kind, Kind::Table | Kind::Row | Kind::Catalog) {
+            return vec![];
+        }
+        let top = Range::new(Position::new(0, 0), Position::new(0, 0));
+        self.code_actions(uri, top)
+            .into_iter()
+            .filter_map(|a| match a {
+                CodeActionOrCommand::CodeAction(a) if wanted(&a) => {
+                    let mut cmd = a.command?;
+                    cmd.title = cmd.title.strip_prefix("zpg: ").unwrap_or(&cmd.title).to_string();
+                    Some(CodeLens { range: top, command: Some(cmd), data: None })
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     fn code_actions(&mut self, uri: &Uri, range: Range) -> Vec<CodeActionOrCommand> {
