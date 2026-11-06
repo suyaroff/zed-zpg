@@ -772,6 +772,9 @@ impl Server {
                 out.extend(self.result_actions(key, &path));
                 if self.caps.show_document {
                     out.extend(export::actions(key, Kind::Result));
+                    if self.result_state(&path).is_some_and(|st| st.more) {
+                        out.push(export::all_rows_action(key));
+                    }
                 }
                 out
             }

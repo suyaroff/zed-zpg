@@ -71,7 +71,8 @@
 |---|---|---|
 | **zpg: Run again** | всегда | перезапускает запрос |
 | **zpg: Edit rows in table** | все колонки из одной таблицы, есть её ключ | страница таблицы, отфильтрованная запросом → [Результаты](08-sql.md#править-строки-результата) |
-| **zpg: Export result as CSV / JSON** | всегда | экспорт результата |
+| **zpg: Export result as CSV / JSON** | всегда | экспорт показанных строк |
+| **zpg: Export all rows of the query as CSV (runs it again)** | результат обрезан по `max_result_rows` | экспорт всех строк через `COPY` → [Экспорт](10-export.md#что-можно-выгрузить) |
 | **zpg: Cancel the query of pid N** | есть колонка `pid`, курсор на строке | `pg_cancel_backend` → [Администрирование](09-admin.md#прервать-запрос-или-сессию) |
 | **zpg: Terminate backend pid N…** | то же | `pg_terminate_backend`, после подтверждения |
 

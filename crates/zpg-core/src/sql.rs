@@ -99,6 +99,12 @@ pub fn copy_csv(snap: &Snapshot, q: &Query) -> String {
     )
 }
 
+/// Every row of a statement as CSV with a header. The line breaks keep a
+/// trailing `--` comment from swallowing the closing parenthesis.
+pub fn copy_query(stmt: &str) -> String {
+    format!("COPY (\n{stmt}\n) TO STDOUT WITH (FORMAT csv, HEADER)")
+}
+
 /// Counts the rows `q.filter` matches.
 pub fn count(snap: &Snapshot, q: &Query) -> String {
     format!("SELECT count(*) FROM {}{}", snap.table.sql(), filter_clause(q))

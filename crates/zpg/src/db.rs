@@ -728,11 +728,21 @@ pub fn copy_csv(
     timeout_ms: u64,
     out: &mut impl std::io::Write,
 ) -> Result<u64, String> {
+    copy_out(c, &sql::copy_csv(snap, q), timeout_ms, out)
+}
+
+/// Writes every row of `stmt` as CSV to `out`. Read-only: a statement that
+/// changes data fails instead of running a second time.
+pub fn copy_query(c: &mut Client, stmt: &str, timeout_ms: u64, out: &mut impl std::io::Write) -> Result<u64, String> {
+    copy_out(c, &sql::copy_query(stmt), timeout_ms, out)
+}
+
+fn copy_out(c: &mut Client, copy: &str, timeout_ms: u64, out: &mut impl std::io::Write) -> Result<u64, String> {
     let mut tx = c.build_transaction().read_only(true).start().map_err(|e| fmt_err(&e))?;
     if timeout_ms > 0 {
         tx.batch_execute(&format!("SET LOCAL statement_timeout = {timeout_ms}")).map_err(|e| fmt_err(&e))?;
     }
-    let mut reader = tx.copy_out(&sql::copy_csv(snap, q)).map_err(|e| fmt_err(&e))?;
+    let mut reader = tx.copy_out(copy).map_err(|e| fmt_err(&e))?;
     let n = std::io::copy(&mut reader, out).map_err(|e| e.to_string())?;
     drop(reader);
     tx.commit().map_err(|e| fmt_err(&e))?;

@@ -56,7 +56,7 @@ Everything works through Zed's own actions: **F12** (go to definition), **hover*
 
 **Administration** ([docs](docs/ru/09-admin.md)) — *Server activity* from `pg_stat_activity` with `blocked_by`; cancel or terminate a backend from any result with a `pid` column.
 
-**Export** ([docs](docs/ru/10-export.md)) — a page or a result as CSV, JSON or INSERT statements; all rows matching `where` via `COPY`.
+**Export** ([docs](docs/ru/10-export.md)) — a page or a result as CSV, JSON or INSERT statements; all rows matching `where`, or all rows of a cut result, via `COPY`.
 
 All actions, settings, header fields, files and error messages: [reference](docs/ru/11-reference.md).
 

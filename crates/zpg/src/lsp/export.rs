@@ -29,9 +29,19 @@ pub(super) fn actions(key: &str, kind: Kind) -> Vec<CodeActionOrCommand> {
         .collect()
 }
 
+/// *Export all rows* of a result cut at `max_result_rows`.
+pub(super) fn all_rows_action(key: &str) -> CodeActionOrCommand {
+    command(
+        "zpg: Export all rows of the query as CSV (runs it again)".into(),
+        CMD_EXPORT,
+        vec![Value::String(key.to_string()), Value::from("csv-all")],
+    )
+}
+
 impl Server {
     /// Writes `.zpg/<conn>/exports/<name>.<ext>` and opens it. Pages export
-    /// what was loaded (not unsaved edits) in the shown columns.
+    /// what was loaded (not unsaved edits) in the shown columns; `csv-all`
+    /// reads every row from the database again.
     pub(super) fn export(&mut self, conn: &Connection, key: &str, format: &str) -> Res<()> {
         let Some(doc) = self.docs.get(key) else {
             return Ok(());
@@ -48,6 +58,8 @@ impl Server {
         let Some(snap) = snap else {
             return show(conn, MessageType::ERROR, "zpg: no saved state for this file; refresh it first".into());
         };
+        let result = if kind == Kind::Result { self.result_state(&path) } else { None };
+        let (query, cut) = result.map_or((None, false), |st| (Some(st.sql.clone()), st.more));
         let stem = match kind {
             Kind::Table => snap.table.file_stem(),
             _ => path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "result".into()),
@@ -69,13 +81,14 @@ impl Server {
                 let timeout = self.settings.statement_timeout_ms;
                 let mut file = File::create(&target)?;
                 let written = self
-                    .cancellable(conn, &snap.conn, &format!("Exporting {}", snap.table), |c| {
-                        db::copy_csv(c, &snap, &snap.query, timeout, &mut file)
+                    .cancellable(conn, &snap.conn, &format!("Exporting {stem}"), |c| match &query {
+                        Some(sql) => db::copy_query(c, sql, timeout, &mut file),
+                        None => db::copy_csv(c, &snap, &snap.query, timeout, &mut file),
                     })?
                     .and_then(|r| r);
                 drop(file);
                 match written {
-                    Ok(n) => ("all matching rows".to_string(), n),
+                    Ok(n) => ("all rows".to_string(), n),
                     Err(e) => {
                         let _ = std::fs::remove_file(&target);
                         return if running::cancelled(&e) {
@@ -94,7 +107,8 @@ impl Server {
                 };
                 let n = text.len() as u64;
                 self.write_file(conn, &target, text)?;
-                (format!("{} row{}", rows.len(), if rows.len() == 1 { "" } else { "s" }), n)
+                let hint = if cut { " (the result is cut: code action Export all rows gets the rest)" } else { "" };
+                (format!("{} row{}{hint}", rows.len(), if rows.len() == 1 { "" } else { "s" }), n)
             }
             _ => return Ok(()),
         };
