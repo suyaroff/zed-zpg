@@ -26,18 +26,20 @@ use lsp_types::notification::{
     PublishDiagnostics, ShowMessage,
 };
 use lsp_types::request::{
-    ApplyWorkspaceEdit, CodeActionRequest, CodeLensRequest, Completion, ExecuteCommand, Formatting, GotoDefinition,
-    HoverRequest, Request as _, SemanticTokensFullRequest, ShowDocument,
+    ApplyWorkspaceEdit, CodeActionRequest, CodeLensRequest, Completion, DocumentSymbolRequest, ExecuteCommand,
+    Formatting, GotoDefinition, HoverRequest, Request as _, SemanticTokensFullRequest, ShowDocument,
+    WorkspaceSymbolRequest,
 };
 use lsp_types::{
     ApplyWorkspaceEditParams, CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionProviderCapability, CodeLens,
-    CodeLensOptions, Command, CompletionOptions, CompletionResponse, DocumentChanges, ExecuteCommandOptions,
-    GotoDefinitionResponse, Hover, HoverContents, HoverProviderCapability, InitializeParams, Location, MarkupContent,
-    MarkupKind, MessageType, OneOf, OptionalVersionedTextDocumentIdentifier, Position, PublishDiagnosticsParams, Range,
-    SaveOptions, SemanticTokenType, SemanticTokens, SemanticTokensFullOptions, SemanticTokensLegend,
-    SemanticTokensOptions, SemanticTokensResult, SemanticTokensServerCapabilities, ServerCapabilities,
-    ShowDocumentParams, ShowMessageParams, TextDocumentEdit, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Uri, WorkspaceEdit,
+    CodeLensOptions, Command, CompletionOptions, CompletionResponse, DocumentChanges, DocumentSymbolResponse,
+    ExecuteCommandOptions, GotoDefinitionResponse, Hover, HoverContents, HoverProviderCapability, InitializeParams,
+    Location, MarkupContent, MarkupKind, MessageType, OneOf, OptionalVersionedTextDocumentIdentifier, Position,
+    PublishDiagnosticsParams, Range, SaveOptions, SemanticTokenType, SemanticTokens, SemanticTokensFullOptions,
+    SemanticTokensLegend, SemanticTokensOptions, SemanticTokensResult, SemanticTokensServerCapabilities,
+    ServerCapabilities, ShowDocumentParams, ShowMessageParams, TextDocumentEdit, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Uri, WorkspaceEdit,
+    WorkspaceSymbolResponse,
 };
 use serde_json::Value;
 use zpg_core::header::encode_name;
@@ -179,6 +181,8 @@ pub fn run() -> Res<()> {
             ..Default::default()
         }),
         document_formatting_provider: Some(OneOf::Left(true)),
+        document_symbol_provider: Some(OneOf::Left(true)),
+        workspace_symbol_provider: Some(OneOf::Left(true)),
         semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
             SemanticTokensOptions {
                 legend: SemanticTokensLegend {
@@ -456,6 +460,15 @@ impl Server {
                 let pos = p.text_document_position;
                 let items = self.completion(pos.text_document.uri.as_str(), pos.position);
                 Ok(serde_json::to_value(CompletionResponse::Array(items))?)
+            }
+            DocumentSymbolRequest::METHOD => {
+                let p: lsp_types::DocumentSymbolParams = serde_json::from_value(req.params)?;
+                let symbols = self.sql_symbols(p.text_document.uri.as_str());
+                Ok(serde_json::to_value(DocumentSymbolResponse::Nested(symbols))?)
+            }
+            WorkspaceSymbolRequest::METHOD => {
+                let p: lsp_types::WorkspaceSymbolParams = serde_json::from_value(req.params)?;
+                Ok(serde_json::to_value(WorkspaceSymbolResponse::Flat(self.workspace_symbols(&p.query)))?)
             }
             Formatting::METHOD => {
                 let p: lsp_types::DocumentFormattingParams = serde_json::from_value(req.params)?;

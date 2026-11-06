@@ -6,8 +6,8 @@ use std::time::Instant;
 use lsp_server::Connection;
 use lsp_types::request::ShowMessageRequest;
 use lsp_types::{
-    CodeActionOrCommand, CodeLens, Command, Hover, MessageActionItem, MessageType, Position, Range,
-    ShowMessageRequestParams,
+    CodeActionOrCommand, CodeLens, Command, DocumentSymbol, Hover, MessageActionItem, MessageType, Position, Range,
+    ShowMessageRequestParams, SymbolKind,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -630,6 +630,33 @@ impl Server {
         self.show_document(conn, &target)
     }
 
+    /// A statement per symbol, for the outline of a `.sql` file. Zed asks for
+    /// them only with `"document_symbols": "on"` for the language.
+    pub(super) fn sql_symbols(&self, key: &str) -> Vec<DocumentSymbol> {
+        let Some(doc) = self.docs.get(key).filter(|d| d.kind() == Kind::Sql && d.text.len() <= MAX_LENS_FILE) else {
+            return vec![];
+        };
+        let text = &doc.text;
+        sqlsplit::split(text)
+            .into_iter()
+            .map(|r| {
+                let first = text[r.clone()].lines().next().unwrap_or("").trim_end();
+                let start = offset_to_position(text, r.start);
+                #[allow(deprecated)]
+                DocumentSymbol {
+                    name: first.chars().take(MAX_SYMBOL_NAME).collect(),
+                    detail: None,
+                    kind: SymbolKind::FUNCTION,
+                    tags: None,
+                    deprecated: None,
+                    range: Range::new(start, offset_to_position(text, r.end)),
+                    selection_range: Range::new(start, offset_to_position(text, r.start + first.len())),
+                    children: None,
+                }
+            })
+            .collect()
+    }
+
     pub(super) fn result_actions(&mut self, key: &str, path: &Path) -> Vec<CodeActionOrCommand> {
         let arg = || vec![Value::String(key.to_string())];
         let mut out = vec![command("zpg: Run again".into(), CMD_RERUN, arg())];
@@ -669,6 +696,7 @@ impl Server {
 }
 
 const MAX_LENS_FILE: usize = 5 << 20;
+const MAX_SYMBOL_NAME: usize = 60;
 const MAX_PLAN_LINES: usize = 100_000;
 /// Files scanned for dangerous statements on every change.
 const MAX_DANGER_FILE: usize = 1 << 20;

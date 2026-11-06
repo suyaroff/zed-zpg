@@ -70,6 +70,24 @@ pub fn entry_at(text: &str, line: u32) -> Option<(String, QualName)> {
     None
 }
 
+/// Every relation of a catalog: its line, connection and name.
+pub fn entries(text: &str) -> Vec<(u32, String, QualName)> {
+    let mut conn = None;
+    let mut out = vec![];
+    for (i, l) in text.split('\n').enumerate() {
+        let t = l.trim();
+        if let Some(name) = t.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
+            conn = Some(name);
+        } else if !t.starts_with(['#', '!'])
+            && !t.is_empty()
+            && let (Some(c), Some((q, _))) = (conn, QualName::parse_prefix(t))
+        {
+            out.push((i as u32, c.to_string(), q));
+        }
+    }
+    out
+}
+
 /// The connection whose section `line` is in (its `[name]` line included).
 pub fn conn_at(text: &str, line: u32) -> Option<String> {
     text.split('\n')

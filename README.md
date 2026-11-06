@@ -44,7 +44,7 @@ Details: [install](docs/ru/01-install.md), [connections and settings](docs/ru/02
 
 Everything works through Zed's own actions: **F12** (go to definition), **hover**, **completion** and **`ctrl-.`** (code actions).
 
-**Catalog** ([docs](docs/ru/04-catalog.md)) — `.zpg/catalog.pgdb` lists every connection with its tables and row estimates. Hover shows columns, size and indexes; *Show DDL* rebuilds `CREATE TABLE` with constraints, indexes, triggers and comments; *Back up (pg_dump)* writes `pg_dump --table` output into `.zpg/<conn>/backups/` (settings `pg_dump`, `pg_dump_args`); *Drop…* opens the `DROP` to review.
+**Catalog** ([docs](docs/ru/04-catalog.md)) — `.zpg/catalog.pgdb` lists every connection with its tables and row estimates, also in the outline panel; `ctrl-t` finds a table from any file. Hover shows columns, size and indexes; *Show DDL* rebuilds `CREATE TABLE` with constraints, indexes, triggers and comments; *Back up (pg_dump)* writes `pg_dump --table` output into `.zpg/<conn>/backups/` (settings `pg_dump`, `pg_dump_args`); *Drop…* opens the `DROP` to review.
 
 **Table pages** ([docs](docs/ru/05-table.md)) — `.pgt` files with a header line for `where`, `order`, `columns`, `page`/`limit`, `width` and `apply`, and `total` rows matching. Sort by a column, filter by a cell's value, page with *Next/Last page (2/37)*. Typed hover for json, timestamps, arrays, bytea.
 
@@ -52,7 +52,7 @@ Everything works through Zed's own actions: **F12** (go to definition), **hover*
 
 **Relations** ([docs](docs/ru/07-relations.md)) — F12 on a foreign key opens the referenced row; *Rows of … referencing this* goes the other way; the `.pgr` row view edits long text and pretty-printed jsonb.
 
-**SQL files** ([docs](docs/ru/08-sql.md)) — ▶ runs a statement (`-- @conn` picks the connection, `-- @param $1 = 42` gives `$1` a value), results open as `.pgres`, *Edit rows in table* turns a result into an editable page. Completion, hover and F12 for tables and columns; errors underlined on save (Postgres parses each statement, nothing runs); warnings and a *Run / Cancel* prompt for `UPDATE`/`DELETE` without `WHERE`, `TRUNCATE`, `DROP`; *Explain* / *Explain analyze* (rolled back); `.zpg/history.sql`; cancel a running statement from `ctrl-.` or the status bar.
+**SQL files** ([docs](docs/ru/08-sql.md)) — ▶ runs a statement (`-- @conn` picks the connection, `-- @param $1 = 42` gives `$1` a value), results open as `.pgres`, *Edit rows in table* turns a result into an editable page. Statements in the outline panel (`"document_symbols": "on"`). Completion, hover and F12 for tables and columns; errors underlined on save (Postgres parses each statement, nothing runs); warnings and a *Run / Cancel* prompt for `UPDATE`/`DELETE` without `WHERE`, `TRUNCATE`, `DROP`; *Explain* / *Explain analyze* (rolled back); `.zpg/history.sql`; cancel a running statement from `ctrl-.` or the status bar.
 
 **Administration** ([docs](docs/ru/09-admin.md)) — *Server activity* from `pg_stat_activity` with `blocked_by`; cancel or terminate a backend from any result with a `pid` column.
 

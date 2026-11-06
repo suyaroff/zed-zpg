@@ -41,7 +41,9 @@ cargo install --path crates/zpg
     "Pg Table": { "semantic_tokens": "combined", "soft_wrap": "none" },
     "Pg Row": { "semantic_tokens": "combined" },
     // широкие результаты удобнее без переноса строк
-    "Pg Result": { "soft_wrap": "none" }
+    "Pg Result": { "soft_wrap": "none" },
+    // запросы файла в панели Outline и ctrl-shift-o
+    "SQL": { "document_symbols": "on" }
   }
 }
 ```
