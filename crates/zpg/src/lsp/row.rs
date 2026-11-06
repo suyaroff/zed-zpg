@@ -177,16 +177,21 @@ impl Server {
         Some(md)
     }
 
-    pub(super) fn row_completion(&mut self, path: &Path, text: &str, pos: Position) -> Vec<CompletionItem> {
-        let Some(snap) = snapshot(&mut self.snaps, path) else {
-            return vec![];
+    /// Values that fit the field; and whether the client should ask again as the text changes.
+    pub(super) fn row_completion(&mut self, path: &Path, text: &str, pos: Position) -> (Vec<CompletionItem>, bool) {
+        let Some(snap) = snapshot(&mut self.snaps, path).cloned() else {
+            return (vec![], false);
         };
-        let parsed = record::parse(text, snap);
+        let parsed = record::parse(text, &snap);
         let Some(f) = parsed.field_at(pos.line).filter(|f| f.line == pos.line) else {
-            return vec![];
+            return (vec![], false);
         };
         let range = Range::new(Position::new(pos.line, f.start), Position::new(pos.line, f.end.max(pos.character)));
-        complete::values(snap, f.col, range)
+        let mut items = complete::values(&snap, f.col, range);
+        let line = text.split('\n').nth(pos.line as usize).unwrap_or("");
+        let typed = complete::typed_value(line, f.start, pos.character);
+        let again = self.fk_completion(&snap, f.col, &typed, range, &mut items);
+        (items, again)
     }
 
     pub(super) fn row_actions(&mut self, key: &str, path: &Path, text: &str) -> Vec<CodeActionOrCommand> {

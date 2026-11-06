@@ -749,6 +749,56 @@ fn copy_out(c: &mut Client, copy: &str, timeout_ms: u64, out: &mut impl std::io:
     Ok(n)
 }
 
+/// How long a completion may hold up the server, which does one thing at a time.
+const FK_VALUES_TIMEOUT_MS: u32 = 500;
+
+/// Values of the column a one-column foreign key points at, with a text column
+/// of that row as a label, containing `typed` in either.
+pub fn fk_values(
+    c: &mut Client,
+    fk: &ForeignKey,
+    typed: &str,
+    limit: usize,
+) -> Result<Vec<(String, Option<String>)>, String> {
+    let [ref_col] = fk.ref_columns.as_slice() else {
+        return Ok(vec![]);
+    };
+    let mut tx = c.build_transaction().read_only(true).start().map_err(|e| fmt_err(&e))?;
+    tx.batch_execute(&format!("SET LOCAL statement_timeout = {FK_VALUES_TIMEOUT_MS}")).map_err(|e| fmt_err(&e))?;
+    let target = fk.table.sql();
+    let label: Option<String> = tx
+        .query_opt(
+            "SELECT attname::text FROM pg_attribute
+             WHERE attrelid = to_regclass($1) AND attnum > 0 AND NOT attisdropped AND attname::text <> $2
+               AND format_type(atttypid, NULL) IN ('text', 'character varying')
+             ORDER BY attname IN ('name', 'title', 'label') DESC, attnum LIMIT 1",
+            &[&target, ref_col],
+        )
+        .map_err(|e| fmt_err(&e))?
+        .map(|r| r.get(0));
+    let value = quote_ident(ref_col);
+    let label_col = label.as_deref().map(quote_ident);
+    // Aliases: a bare name in ORDER BY would sort the text cast, not the column.
+    let mut sql = format!(
+        "SELECT {value}::text AS _value, {} AS _label FROM {target} WHERE {value} IS NOT NULL",
+        label_col.as_ref().map_or("NULL::text".to_string(), |l| format!("{l}::text")),
+    );
+    let pattern = format!("%{}%", typed.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+    let mut params: Vec<&(dyn ToSql + Sync)> = vec![];
+    if !typed.is_empty() {
+        params.push(&pattern);
+        sql += &match &label_col {
+            Some(l) => format!(" AND ({value}::text ILIKE $1 OR {l}::text ILIKE $1)"),
+            None => format!(" AND {value}::text ILIKE $1"),
+        };
+    }
+    sql += &format!(" ORDER BY {value} LIMIT {limit}");
+    let rows = tx.query(&sql, &params).map_err(|e| fmt_err(&e))?;
+    let values = rows.iter().map(|r| (r.get(0), r.get(1))).collect();
+    tx.commit().map_err(|e| fmt_err(&e))?;
+    Ok(values)
+}
+
 /// Counting longer than this falls back to the planner's estimate.
 const COUNT_TIMEOUT_MS: u32 = 1000;
 

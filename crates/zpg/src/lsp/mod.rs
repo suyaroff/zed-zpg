@@ -32,14 +32,14 @@ use lsp_types::request::{
 };
 use lsp_types::{
     ApplyWorkspaceEditParams, CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionProviderCapability, CodeLens,
-    CodeLensOptions, Command, CompletionOptions, CompletionResponse, DocumentChanges, DocumentSymbolResponse,
-    ExecuteCommandOptions, GotoDefinitionResponse, Hover, HoverContents, HoverProviderCapability, InitializeParams,
-    Location, MarkupContent, MarkupKind, MessageType, OneOf, OptionalVersionedTextDocumentIdentifier, Position,
-    PublishDiagnosticsParams, Range, SaveOptions, SemanticTokenType, SemanticTokens, SemanticTokensFullOptions,
-    SemanticTokensLegend, SemanticTokensOptions, SemanticTokensResult, SemanticTokensServerCapabilities,
-    ServerCapabilities, ShowDocumentParams, ShowMessageParams, TextDocumentEdit, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Uri, WorkspaceEdit,
-    WorkspaceSymbolResponse,
+    CodeLensOptions, Command, CompletionList, CompletionOptions, CompletionResponse, DocumentChanges,
+    DocumentSymbolResponse, ExecuteCommandOptions, GotoDefinitionResponse, Hover, HoverContents,
+    HoverProviderCapability, InitializeParams, Location, MarkupContent, MarkupKind, MessageType, OneOf,
+    OptionalVersionedTextDocumentIdentifier, Position, PublishDiagnosticsParams, Range, SaveOptions, SemanticTokenType,
+    SemanticTokens, SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions, SemanticTokensResult,
+    SemanticTokensServerCapabilities, ServerCapabilities, ShowDocumentParams, ShowMessageParams, TextDocumentEdit,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit,
+    Uri, WorkspaceEdit, WorkspaceSymbolResponse,
 };
 use serde_json::Value;
 use zpg_core::header::encode_name;
@@ -458,8 +458,8 @@ impl Server {
             Completion::METHOD => {
                 let p: lsp_types::CompletionParams = serde_json::from_value(req.params)?;
                 let pos = p.text_document_position;
-                let items = self.completion(pos.text_document.uri.as_str(), pos.position);
-                Ok(serde_json::to_value(CompletionResponse::Array(items))?)
+                let (items, is_incomplete) = self.completion(pos.text_document.uri.as_str(), pos.position);
+                Ok(serde_json::to_value(CompletionResponse::List(CompletionList { is_incomplete, items }))?)
             }
             DocumentSymbolRequest::METHOD => {
                 let p: lsp_types::DocumentSymbolParams = serde_json::from_value(req.params)?;
@@ -716,22 +716,23 @@ impl Server {
         }
     }
 
-    fn completion(&mut self, key: &str, pos: Position) -> Vec<lsp_types::CompletionItem> {
+    /// The items, and whether the client should ask again as the text changes.
+    fn completion(&mut self, key: &str, pos: Position) -> (Vec<lsp_types::CompletionItem>, bool) {
         let Some(doc) = self.docs.get(key) else {
-            return vec![];
+            return (vec![], false);
         };
         let kind = doc.kind();
         if kind == Kind::Sql {
-            return self.sql_completion(key, pos);
+            return (self.sql_completion(key, pos), false);
         }
         let Some(path) = doc.path() else {
-            return vec![];
+            return (vec![], false);
         };
         let text = doc.text.clone();
         match kind {
             Kind::Table => self.table_completion(&path, &text, pos),
             Kind::Row => self.row_completion(&path, &text, pos),
-            _ => vec![],
+            _ => (vec![], false),
         }
     }
 

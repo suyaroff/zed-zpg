@@ -205,6 +205,9 @@ pub(super) fn changes_action(root: &Path, snap: &Snapshot, key: &str) -> Option<
         .then(|| command("zpg: Open change log".into(), CMD_CHANGES, vec![Value::String(key.to_string())]))
 }
 
+/// Most values of a foreign key offered at once.
+const MAX_FK_VALUES: usize = 50;
+
 /// Inserts a template row below the cursor's row (or after the last row).
 fn insert_row(uri: &Uri, parsed: &Parsed, snap: &Snapshot, cursor_line: u32) -> CodeActionOrCommand {
     let after = parsed
@@ -709,21 +712,43 @@ impl Server {
         Some(md)
     }
 
-    /// Header fields on line 0, values that fit the column in a cell.
-    pub(super) fn table_completion(&mut self, path: &Path, text: &str, pos: Position) -> Vec<CompletionItem> {
-        let Some(snap) = snapshot(&mut self.snaps, path) else {
-            return vec![];
+    /// Adds the values the foreign key on `col` can take; true when the list
+    /// depends on `typed` or was cut, so the client should ask again as it changes.
+    pub(super) fn fk_completion(
+        &mut self,
+        snap: &Snapshot,
+        col: usize,
+        typed: &str,
+        range: Range,
+        items: &mut Vec<CompletionItem>,
+    ) -> bool {
+        let Some(fk) = snap.foreign_keys.iter().find(|f| f.columns == [col]) else {
+            return false;
+        };
+        let Ok(values) = self.db.read(&self.settings, &snap.conn, |c| db::fk_values(c, fk, typed, MAX_FK_VALUES))
+        else {
+            return false;
+        };
+        items.extend(complete::fk_values(&values, range));
+        values.len() >= MAX_FK_VALUES || !typed.is_empty()
+    }
+
+    /// Header fields on line 0, values that fit the column in a cell; and
+    /// whether the client should ask again as the text changes.
+    pub(super) fn table_completion(&mut self, path: &Path, text: &str, pos: Position) -> (Vec<CompletionItem>, bool) {
+        let Some(snap) = snapshot(&mut self.snaps, path).cloned() else {
+            return (vec![], false);
         };
         let line = text.split('\n').nth(pos.line as usize).unwrap_or("");
         if pos.line == 0 {
-            return complete::header(line, pos, snap);
+            return (complete::header(line, pos, &snap), false);
         }
         let cells = table::split(line);
         let Some(i) = cell_at(line, pos.character) else {
-            return vec![];
+            return (vec![], false);
         };
         let Some(&col) = snap.shown().get(i) else {
-            return vec![];
+            return (vec![], false);
         };
         let c = &cells[i];
         let range = if pos.character >= c.start && pos.character <= c.end.max(c.start) {
@@ -731,7 +756,13 @@ impl Server {
         } else {
             Range::new(pos, pos)
         };
-        complete::values(snap, col, range)
+        let mut items = complete::values(&snap, col, range);
+        let on_row = table::parse(text).rows.iter().any(|r| r.line == pos.line);
+        let again = on_row && {
+            let typed = complete::typed_value(line, c.start, pos.character);
+            self.fk_completion(&snap, col, &typed, range, &mut items)
+        };
+        (items, again)
     }
 
     pub(super) fn table_actions(

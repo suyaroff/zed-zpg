@@ -3,6 +3,8 @@ use zpg_core::cell;
 use zpg_core::header::display_ident;
 use zpg_core::{Column, Snapshot};
 
+use super::query::position_to_offset;
+
 pub fn item(label: &str, kind: CompletionItemKind, detail: Option<&str>, range: Range) -> CompletionItem {
     CompletionItem {
         label: label.to_string(),
@@ -38,6 +40,32 @@ pub fn values(snap: &Snapshot, i: usize, range: Range) -> Vec<CompletionItem> {
         out.push(item(&cell::escape(v), CompletionItemKind::ENUM_MEMBER, Some(&c.type_name), range));
     }
     out
+}
+
+/// Values of a foreign key with their labels: the label can be typed too, only the value goes in.
+pub fn fk_values(values: &[(String, Option<String>)], range: Range) -> Vec<CompletionItem> {
+    values
+        .iter()
+        .map(|(v, label)| {
+            let text = cell::escape(v);
+            let mut it = item(&text, CompletionItemKind::VALUE, label.as_deref(), range);
+            if let Some(l) = label {
+                it.filter_text = Some(format!("{text} {l}"));
+            }
+            it
+        })
+        .collect()
+}
+
+/// The value typed in `line` from UTF-16 column `start` up to `ch`; empty for
+/// `NULL`, `DEFAULT` and `+`, which say nothing about the value wanted.
+pub fn typed_value(line: &str, start: u32, ch: u32) -> String {
+    let a = position_to_offset(line, Position::new(0, start));
+    let b = position_to_offset(line, Position::new(0, ch));
+    match cell::parse(line.get(a..b).unwrap_or("").trim()) {
+        Ok(cell::Value::Text(s)) => s,
+        _ => String::new(),
+    }
 }
 
 /// Inside `where="…"` / `order="…"` / `columns="…"`: column names; elsewhere: header fields.
