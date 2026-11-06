@@ -172,17 +172,57 @@ pub fn for_op(snap: &Snapshot, op: &Op) -> Stmt {
     Stmt { sql, params: b.params }
 }
 
-/// Human-readable SQL with parameters inlined as literals, for previews.
-pub fn inline(stmt: &Stmt) -> String {
-    let mut sql = stmt.sql.clone();
-    for (i, p) in stmt.params.iter().enumerate().rev() {
-        let lit = match p {
-            Some(s) => quote_literal(s),
-            None => "NULL".into(),
-        };
-        sql = sql.replace(&format!("${}::text", i + 1), &lit);
+/// A literal on one line: breaks in `s` are written as `E'…\n…'` escapes.
+fn one_line_literal(s: &str) -> String {
+    if !s.contains(['\n', '\r']) {
+        return quote_literal(s);
     }
-    sql
+    let mut out = String::from("E'");
+    for c in s.chars() {
+        match c {
+            '\\' => out += "\\\\",
+            '\'' => out += "''",
+            '\n' => out += "\\n",
+            '\r' => out += "\\r",
+            c => out.push(c),
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// The statement on one line with parameters inlined as literals, for
+/// previews and the change log. One pass: a value that looks like a
+/// placeholder stays as it is.
+pub fn inline(stmt: &Stmt) -> String {
+    const PLACEHOLDER_END: &str = "::text";
+    let mut out = String::with_capacity(stmt.sql.len());
+    let mut rest = stmt.sql.as_str();
+    while let Some(at) = rest.find('$') {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at + 1..];
+        let digits = tail.len() - tail.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+        let param = tail[..digits]
+            .parse::<usize>()
+            .ok()
+            .and_then(|n| stmt.params.get(n.checked_sub(1)?))
+            .filter(|_| tail[digits..].starts_with(PLACEHOLDER_END));
+        match param {
+            Some(p) => {
+                match p {
+                    Some(s) => out += &one_line_literal(s),
+                    None => out += "NULL",
+                }
+                rest = &tail[digits + PLACEHOLDER_END.len()..];
+            }
+            None => {
+                out.push('$');
+                rest = tail;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 #[cfg(test)]
