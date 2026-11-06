@@ -16,8 +16,8 @@ use zpg_core::{
 use super::uri::table_of_row;
 use super::{
     CMD_APPLY, CMD_BACKREF, CMD_BACKUP, CMD_CHANGES, CMD_DDL, CMD_FILTER, CMD_OPEN_ROW, CMD_PAGE, CMD_PREVIEW,
-    CMD_REFRESH, CMD_SORT, Kind, Res, Server, command, complete, edit_action, export, line_range, show, snapshot,
-    values,
+    CMD_REFRESH, CMD_SORT, Kind, Res, Server, command, complete, edit_action, export, import, line_range, show,
+    snapshot, values,
 };
 use crate::db::{self, Defaults};
 use crate::state;
@@ -779,6 +779,7 @@ impl Server {
         }
         if snap.read_only.is_none() {
             out.push(insert_row(uri, &parsed, snap, range.start.line));
+            out.extend(import::actions(key, &root, snap));
         }
         if pending && clean {
             let summary = d.as_ref().map(|d| d.summary()).unwrap_or_default();

@@ -48,7 +48,7 @@ Everything works through Zed's own actions: **F12** (go to definition), **hover*
 
 **Table pages** ([docs](docs/ru/05-table.md)) — `.pgt` files with a header line for `where`, `order`, `columns`, `page`/`limit`, `width` and `apply`, and `total` rows matching. Sort by a column, filter by a cell's value, page with *Next/Last page (2/37)*. Typed hover for json, timestamps, arrays, bytea.
 
-**Editing** ([docs](docs/ru/06-editing.md)) — `NULL`, `DEFAULT`, `+` for a new key, `\n`/`\|` escapes; *Insert row* template; *Preview SQL*; one transaction per apply; `xmin` guards against concurrent changes; `apply=save` writes on every save. Each apply goes to a per-table change log with the statements that revert it.
+**Editing** ([docs](docs/ru/06-editing.md)) — `NULL`, `DEFAULT`, `+` for a new key, `\n`/`\|` escapes; *Insert row* template; *Preview SQL*; one transaction per apply; `xmin` guards against concurrent changes; `apply=save` writes on every save. Each apply goes to a per-table change log with the statements that revert it; *Import rows* adds a CSV from `.zpg/<conn>/imports/` to the page, to check and apply like any edit.
 
 **Relations** ([docs](docs/ru/07-relations.md)) — F12 on a foreign key opens the referenced row; *Rows of … referencing this* goes the other way; the `.pgr` row view edits long text and pretty-printed jsonb.
 

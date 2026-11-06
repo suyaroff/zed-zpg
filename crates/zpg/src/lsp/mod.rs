@@ -5,6 +5,7 @@ mod complete;
 mod diagnostics;
 mod edits;
 mod export;
+mod import;
 mod page;
 mod query;
 mod row;
@@ -74,6 +75,7 @@ const CMD_DATABASES: &str = "zpg.databases";
 const CMD_SCHEMAS: &str = "zpg.schemas";
 const CMD_SIGNAL: &str = "zpg.signal";
 const CMD_BACKUP: &str = "zpg.backup";
+const CMD_IMPORT: &str = "zpg.import";
 const CMD_CHANGES: &str = "zpg.changes";
 
 /// Bigger exports and backups are written but not opened in the editor.
@@ -215,6 +217,7 @@ pub fn run() -> Res<()> {
                 CMD_SCHEMAS,
                 CMD_SIGNAL,
                 CMD_BACKUP,
+                CMD_IMPORT,
                 CMD_CHANGES,
             ]
             .map(String::from)
@@ -538,6 +541,7 @@ impl Server {
                         }
                     }
                     CMD_PREVIEW => self.preview(conn, &key)?,
+                    CMD_IMPORT => self.import_csv(conn, &key, p.arguments.get(1).and_then(Value::as_str))?,
                     CMD_CHANGES => self.open_changes(conn, &key)?,
                     CMD_DDL => self.show_ddl(conn, &key, num(1))?,
                     CMD_BACKUP => self.backup(conn, &key, num(1))?,

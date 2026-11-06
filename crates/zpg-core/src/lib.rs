@@ -1,5 +1,6 @@
 pub mod catalog;
 pub mod cell;
+pub mod csv;
 pub mod diff;
 pub mod export;
 pub mod header;
