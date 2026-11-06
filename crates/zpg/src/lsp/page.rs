@@ -9,12 +9,15 @@ use zpg_core::cell::{self, Value as CellValue};
 use zpg_core::diff::{self, Diff, Source};
 use zpg_core::header::{display_ident, encode_name, quote_literal};
 use zpg_core::table::{self, Parsed};
-use zpg_core::{Apply, ForeignKey, Issue, QualName, Query, Severity, Snapshot, Total, record, sql, sqlctx};
+use zpg_core::{
+    Apply, ForeignKey, Issue, QualName, Query, Severity, SnapRow, Snapshot, Total, journal, record, sql, sqlctx,
+};
 
 use super::uri::table_of_row;
 use super::{
-    CMD_APPLY, CMD_BACKREF, CMD_BACKUP, CMD_DDL, CMD_FILTER, CMD_OPEN_ROW, CMD_PAGE, CMD_PREVIEW, CMD_REFRESH,
-    CMD_SORT, Kind, Res, Server, command, complete, edit_action, export, line_range, show, snapshot, values,
+    CMD_APPLY, CMD_BACKREF, CMD_BACKUP, CMD_CHANGES, CMD_DDL, CMD_FILTER, CMD_OPEN_ROW, CMD_PAGE, CMD_PREVIEW,
+    CMD_REFRESH, CMD_SORT, Kind, Res, Server, command, complete, edit_action, export, line_range, show, snapshot,
+    values,
 };
 use crate::db::{self, Defaults};
 use crate::state;
@@ -188,6 +191,18 @@ pub(super) fn backref_actions(snap: &Snapshot, key: &str, line: u32) -> Vec<Code
             )
         })
         .collect()
+}
+
+/// The change log of `snap`'s table under the `.zpg` dir `root`.
+pub(super) fn changes_file(root: &Path, snap: &Snapshot) -> PathBuf {
+    root.join(encode_name(&snap.conn)).join(format!("{}.changes.sql", snap.table.file_stem()))
+}
+
+/// *Open change log*, once the table has one.
+pub(super) fn changes_action(root: &Path, snap: &Snapshot, key: &str) -> Option<CodeActionOrCommand> {
+    changes_file(root, snap)
+        .exists()
+        .then(|| command("zpg: Open change log".into(), CMD_CHANGES, vec![Value::String(key.to_string())]))
 }
 
 /// Inserts a template row below the cursor's row (or after the last row).
@@ -445,13 +460,63 @@ impl Server {
             }
         };
         match db::apply(client, snap, d) {
-            Ok(rows) => Ok(Some(rows)),
+            Ok(rows) => {
+                // The write is done: a log that can't be written only warns.
+                if let Err(e) = self.log_apply(conn, key, snap, d, &rows) {
+                    show(conn, MessageType::WARNING, format!("zpg: saved, but the change log wasn't written: {e}"))?;
+                }
+                Ok(Some(rows))
+            }
             Err(e) => {
                 let line = d.ops[e.op].line().unwrap_or(0);
                 self.fail(conn, key, line, &e.message)?;
                 Ok(None)
             }
         }
+    }
+
+    /// Puts what was just applied, and how to revert it, on top of the table's change log.
+    fn log_apply(
+        &mut self,
+        conn: &Connection,
+        key: &str,
+        snap: &Snapshot,
+        d: &Diff,
+        rows: &[Option<SnapRow>],
+    ) -> Res<()> {
+        let Some(path) = self.docs.get(key).and_then(|doc| doc.path()) else {
+            return Ok(());
+        };
+        let target = changes_file(&self.zpg_root(&path), snap);
+        let applied: Vec<String> = d.ops.iter().map(|op| sql::inline(&sql::for_log(snap, op))).collect();
+        // In reverse: a key change is an insert and then a delete.
+        let undo: Vec<String> = d
+            .ops
+            .iter()
+            .zip(rows)
+            .rev()
+            .filter_map(|(op, new)| sql::undo_for_op(snap, op, new.as_ref()))
+            .map(|s| sql::inline(&s))
+            .collect();
+        let time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let entry = journal::entry(&time, &snap.conn, &snap.table.to_string(), &d.summary(), &applied, &undo);
+        let old = match self.doc_key(&target) {
+            Some(k) => self.docs[&k].text.clone(),
+            None => std::fs::read_to_string(&target).unwrap_or_default(),
+        };
+        self.write_file(conn, &target, journal::prepend(&old, &entry, journal::MAX_LEN))
+    }
+
+    /// Opens the change log of the table on this page or row view.
+    pub(super) fn open_changes(&mut self, conn: &Connection, key: &str) -> Res<()> {
+        let Some(path) = self.docs.get(key).and_then(|doc| doc.path()) else {
+            return Ok(());
+        };
+        let root = self.zpg_root(&path);
+        let Some(target) = snapshot(&mut self.snaps, &path).map(|snap| changes_file(&root, snap)) else {
+            return Ok(());
+        };
+        self.show_document(conn, &target)
     }
 
     /// Writes the buffer's changes to the database. In `apply=manual` mode only
@@ -679,6 +744,7 @@ impl Server {
         let key = uri.as_str();
         let arg = || Value::String(key.to_string());
         let mut out = vec![];
+        let root = self.zpg_root(path);
 
         let parsed = table::parse(text);
         let Some(snap) = snapshot(&mut self.snaps, path) else {
@@ -757,6 +823,7 @@ impl Server {
         }
         if self.caps.show_document {
             out.push(command("zpg: Show DDL".into(), CMD_DDL, vec![arg()]));
+            out.extend(changes_action(&root, snap, key));
             out.push(command(format!("zpg: Back up {} (pg_dump)", snap.table), CMD_BACKUP, vec![arg()]));
             out.extend(export::actions(key, Kind::Table));
         }

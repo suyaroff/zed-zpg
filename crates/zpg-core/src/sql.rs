@@ -5,7 +5,7 @@
 use crate::cell::Value;
 use crate::diff::Op;
 use crate::header::{Query, quote_ident, quote_literal};
-use crate::{Column, Snapshot};
+use crate::{Column, SnapRow, Snapshot};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stmt {
@@ -43,9 +43,8 @@ impl Builder {
         }
     }
 
-    /// `"pk" = ... AND xmin = ...` for a snapshot row.
-    fn row_match(&mut self, snap: &Snapshot, row: usize) -> String {
-        let r = &snap.rows[row];
+    /// `"pk" = ... AND xmin = ...` for a row.
+    fn row_match(&mut self, snap: &Snapshot, r: &SnapRow) -> String {
         let mut parts: Vec<String> = snap
             .pk
             .iter()
@@ -141,9 +140,18 @@ pub fn select_row(snap: &Snapshot, key: &[Option<String>], pretty: bool) -> Stmt
 }
 
 pub fn for_op(snap: &Snapshot, op: &Op) -> Stmt {
+    let ret = format!(" RETURNING {}", returning(&snap.columns, true, false));
+    op_stmt(snap, op, &ret)
+}
+
+/// The statement of `op` without `RETURNING`, for the change log.
+pub fn for_log(snap: &Snapshot, op: &Op) -> Stmt {
+    op_stmt(snap, op, "")
+}
+
+fn op_stmt(snap: &Snapshot, op: &Op, ret: &str) -> Stmt {
     let mut b = Builder { params: vec![] };
     let table = snap.table.sql();
-    let ret = returning(&snap.columns, true, false);
     let sql = match op {
         Op::Update { row, sets, .. } => {
             let sets: Vec<String> = sets
@@ -153,8 +161,8 @@ pub fn for_op(snap: &Snapshot, op: &Op) -> Stmt {
                     format!("{} = {}", quote_ident(&c.name), b.cast(v, &c.type_name))
                 })
                 .collect();
-            let cond = b.row_match(snap, *row);
-            format!("UPDATE {table} SET {} WHERE {cond} RETURNING {ret}", sets.join(", "))
+            let cond = b.row_match(snap, &snap.rows[*row]);
+            format!("UPDATE {table} SET {} WHERE {cond}{ret}", sets.join(", "))
         }
         Op::Insert { values, .. } => {
             let (cols, vals): (Vec<String>, Vec<String>) = snap
@@ -165,17 +173,56 @@ pub fn for_op(snap: &Snapshot, op: &Op) -> Stmt {
                 .map(|(c, v)| (quote_ident(&c.name), b.cast(v, &c.type_name)))
                 .unzip();
             if cols.is_empty() {
-                format!("INSERT INTO {table} DEFAULT VALUES RETURNING {ret}")
+                format!("INSERT INTO {table} DEFAULT VALUES{ret}")
             } else {
-                format!("INSERT INTO {table} ({}) VALUES ({}) RETURNING {ret}", cols.join(", "), vals.join(", "))
+                format!("INSERT INTO {table} ({}) VALUES ({}){ret}", cols.join(", "), vals.join(", "))
             }
         }
         Op::Delete { row } => {
-            let cond = b.row_match(snap, *row);
+            let cond = b.row_match(snap, &snap.rows[*row]);
             format!("DELETE FROM {table} WHERE {cond}")
         }
     };
     Stmt { sql, params: b.params }
+}
+
+/// What reverts `op`, given the row it left behind (`None` after a delete).
+/// Updates and deletes of inserted rows are guarded by that row's `xmin`, so
+/// they touch nothing when the row changed again.
+pub fn undo_for_op(snap: &Snapshot, op: &Op, new: Option<&SnapRow>) -> Option<Stmt> {
+    let mut b = Builder { params: vec![] };
+    let table = snap.table.sql();
+    let sql = match op {
+        Op::Update { row, sets, .. } => {
+            let old = &snap.rows[*row];
+            let sets: Vec<String> = sets
+                .iter()
+                .map(|(i, _)| {
+                    let c = &snap.columns[*i];
+                    let v = Value::from_db(old.values[*i].as_deref());
+                    format!("{} = {}", quote_ident(&c.name), b.cast(&v, &c.type_name))
+                })
+                .collect();
+            let cond = b.row_match(snap, new?);
+            format!("UPDATE {table} SET {} WHERE {cond}", sets.join(", "))
+        }
+        Op::Insert { .. } => {
+            let cond = b.row_match(snap, new?);
+            format!("DELETE FROM {table} WHERE {cond}")
+        }
+        Op::Delete { row } => {
+            let old = &snap.rows[*row];
+            let (cols, vals): (Vec<String>, Vec<String>) = snap
+                .columns
+                .iter()
+                .zip(&old.values)
+                .filter(|(c, _)| !c.generated)
+                .map(|(c, v)| (quote_ident(&c.name), b.cast(&Value::from_db(v.as_deref()), &c.type_name)))
+                .unzip();
+            format!("INSERT INTO {table} ({}) OVERRIDING SYSTEM VALUE VALUES ({})", cols.join(", "), vals.join(", "))
+        }
+    };
+    Some(Stmt { sql, params: b.params })
 }
 
 /// A literal on one line: breaks in `s` are written as `E'…\n…'` escapes.

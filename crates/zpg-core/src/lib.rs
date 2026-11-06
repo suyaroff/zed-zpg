@@ -4,6 +4,7 @@ pub mod diff;
 pub mod export;
 pub mod header;
 pub mod history;
+pub mod journal;
 pub mod record;
 pub mod snapshot;
 pub mod sql;

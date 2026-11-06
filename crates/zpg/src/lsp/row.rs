@@ -8,7 +8,7 @@ use serde_json::Value;
 use zpg_core::cell::Value as CellValue;
 use zpg_core::{Apply, Severity, Snapshot, record};
 
-use super::page::{backref_actions, cell_texts, column_md};
+use super::page::{backref_actions, cell_texts, changes_action, column_md};
 use super::uri::{row_file, rows_dir, table_of_row};
 use super::{CMD_APPLY, CMD_REFRESH, Res, Server, command, complete, show, snapshot, values};
 use crate::db;
@@ -192,6 +192,7 @@ impl Server {
     pub(super) fn row_actions(&mut self, key: &str, path: &Path, text: &str) -> Vec<CodeActionOrCommand> {
         let arg = || Value::String(key.to_string());
         let mut out = vec![];
+        let root = self.zpg_root(path);
         if let Some(snap) = snapshot(&mut self.snaps, path) {
             let parsed = record::parse(text, snap);
             let d = record::diff(&parsed, snap);
@@ -203,6 +204,7 @@ impl Server {
         if self.caps.show_document
             && let Some(snap) = snapshot(&mut self.snaps, path)
         {
+            out.extend(changes_action(&root, snap, key));
             out.extend(backref_actions(snap, key, 0));
         }
         out
