@@ -235,6 +235,38 @@ pub fn conn_before(text: &str, offset: usize) -> Option<String> {
     conn_at(&conn_directives(text), offset)
 }
 
+/// The number and value of a `-- @param $n = value` line; `None` is NULL.
+fn param_directive(line: &str) -> Option<(u32, Option<String>)> {
+    let rest = line.trim().strip_prefix("--")?.trim().strip_prefix("@param")?.trim().strip_prefix('$')?;
+    let (n, v) = rest.split_once('=')?;
+    let n = n.trim().parse().ok().filter(|&n: &u32| n > 0)?;
+    let v = v.trim();
+    if v.eq_ignore_ascii_case("null") {
+        return Some((n, None));
+    }
+    Some((n, Some(v.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')).map_or(v.into(), |q| q.replace("''", "'")))))
+}
+
+/// The `-- @param` lines right above the statement at byte `start`, up to
+/// the first line that is neither blank nor a `--` comment: they hold for
+/// that statement only, so a stale value can't reach another one. The
+/// closest line for a number wins.
+pub fn params_above(text: &str, start: usize) -> Vec<(u32, Option<String>)> {
+    let mut out: Vec<(u32, Option<String>)> = vec![];
+    for line in text[..start].lines().rev() {
+        let t = line.trim();
+        if !t.is_empty() && !t.starts_with("--") {
+            break;
+        }
+        if let Some((n, v)) = param_directive(t)
+            && !out.iter().any(|(k, _)| *k == n)
+        {
+            out.push((n, v));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

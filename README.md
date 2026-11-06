@@ -52,7 +52,7 @@ Everything works through Zed's own actions: **F12** (go to definition), **hover*
 
 **Relations** ([docs](docs/ru/07-relations.md)) — F12 on a foreign key opens the referenced row; *Rows of … referencing this* goes the other way; the `.pgr` row view edits long text and pretty-printed jsonb.
 
-**SQL files** ([docs](docs/ru/08-sql.md)) — ▶ runs a statement (`-- @conn` picks the connection), results open as `.pgres`, *Edit rows in table* turns a result into an editable page. Completion, hover and F12 for tables and columns; errors underlined on save (Postgres parses each statement, nothing runs); warnings and a *Run / Cancel* prompt for `UPDATE`/`DELETE` without `WHERE`, `TRUNCATE`, `DROP`; *Explain* / *Explain analyze* (rolled back); `.zpg/history.sql`; cancel a running statement from `ctrl-.` or the status bar.
+**SQL files** ([docs](docs/ru/08-sql.md)) — ▶ runs a statement (`-- @conn` picks the connection, `-- @param $1 = 42` gives `$1` a value), results open as `.pgres`, *Edit rows in table* turns a result into an editable page. Completion, hover and F12 for tables and columns; errors underlined on save (Postgres parses each statement, nothing runs); warnings and a *Run / Cancel* prompt for `UPDATE`/`DELETE` without `WHERE`, `TRUNCATE`, `DROP`; *Explain* / *Explain analyze* (rolled back); `.zpg/history.sql`; cancel a running statement from `ctrl-.` or the status bar.
 
 **Administration** ([docs](docs/ru/09-admin.md)) — *Server activity* from `pg_stat_activity` with `blocked_by`; cancel or terminate a backend from any result with a `pid` column.
 

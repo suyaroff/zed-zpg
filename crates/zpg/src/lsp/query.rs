@@ -213,9 +213,12 @@ impl Server {
         if ranges.is_empty() {
             return Ok(());
         }
-        let stmts: Vec<&str> = ranges.iter().map(|r| &text[r.clone()]).collect();
+        let sources: Vec<&str> = ranges.iter().map(|r| &text[r.clone()]).collect();
+        let bound: Vec<String> =
+            ranges.iter().map(|r| sqlctx::bind(&text[r.clone()], &sqlsplit::params_above(&text, r.start))).collect();
+        let stmts: Vec<&str> = bound.iter().map(String::as_str).collect();
         let read_only = self.settings.connections.get(conn_name).is_some_and(|c| c.read_only());
-        let dangers: Vec<String> = stmts.iter().filter_map(|s| sqlctx::danger(s)).collect();
+        let dangers: Vec<String> = sources.iter().filter_map(|s| sqlctx::danger(s)).collect();
         if !dangers.is_empty() && !confirmed && !read_only && self.caps.message_actions {
             let again = RunTarget {
                 start,
@@ -237,10 +240,13 @@ impl Server {
         if let Ok(Err(e)) = &ran
             && !running::cancelled(&e.message)
         {
-            let issue = error_issue(&text, ranges[e.stmt].clone(), e.position, e.message.clone());
+            // Literals in place of `$n` move what Postgres points at.
+            let position = e.position.filter(|_| stmts[e.stmt] == sources[e.stmt]);
+            let message = param_hint(&e.message);
+            let issue = error_issue(&text, ranges[e.stmt].clone(), position, message.clone());
             self.failed.insert(key.to_string(), issue);
             self.publish(conn, key)?;
-            let first = e.message.lines().next().unwrap_or("");
+            let first = message.lines().next().unwrap_or("");
             return show(conn, MessageType::ERROR, format!("zpg: {first} (rolled back)"));
         }
         let Some(outcomes) = self.outcomes(conn, ran)? else {
@@ -282,7 +288,7 @@ impl Server {
         let (typ, message) = match ran {
             Ok(Ok(o)) => return Ok(Some(o)),
             Ok(Err(e)) if running::cancelled(&e.message) => (MessageType::INFO, "zpg: cancelled (rolled back)".into()),
-            Ok(Err(e)) => (MessageType::ERROR, format!("zpg: {} (rolled back)", e.message)),
+            Ok(Err(e)) => (MessageType::ERROR, format!("zpg: {} (rolled back)", param_hint(&e.message))),
             Err(e) => (MessageType::ERROR, format!("zpg: {e}")),
         };
         show(conn, typ, message)?;
@@ -451,7 +457,7 @@ impl Server {
                 "zpg: the file changed since this was drawn; nothing was run, try again".into(),
             );
         };
-        let stmt = text[start..end].trim();
+        let stmt = sqlctx::bind(text[start..end].trim(), &sqlsplit::params_above(&text, start));
         let sql = if analyze { format!("EXPLAIN (ANALYZE, BUFFERS) {stmt}") } else { format!("EXPLAIN {stmt}") };
         let conn_name = target.conn.as_str();
         let read_only = self.settings.connections.get(conn_name).is_some_and(|c| c.read_only());
@@ -707,6 +713,17 @@ impl RunTarget {
 
 fn first_word(stmt: &str) -> String {
     stmt.split(|c: char| !c.is_alphanumeric()).find(|w| !w.is_empty()).unwrap_or("").to_lowercase()
+}
+
+/// A Postgres error, telling how to give a value to a `$n` it complains about.
+fn param_hint(message: &str) -> String {
+    if !message.contains("parameter $") {
+        return message.to_string();
+    }
+    let (first, rest) = message.split_once('\n').unwrap_or((message, ""));
+    format!("{first}; give it a value with a `-- @param $1 = …` line above the statement\n{rest}")
+        .trim_end()
+        .to_string()
 }
 
 /// Statements EXPLAIN accepts.

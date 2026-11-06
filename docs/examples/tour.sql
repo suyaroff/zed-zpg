@@ -19,6 +19,11 @@ update zpg_demo.customers set city = 'Ташкент' where id = 7;
 update zpg_demo.products set price = price + 1 where sku = 'CB-03';
 select sku, price from zpg_demo.products where sku = 'CB-03';
 
+-- Значения $1, $2 задаются строками прямо над запросом и действуют только на него.
+-- @param $1 = 'paid'
+-- @param $2 = 50
+select id, status, total from zpg_demo.orders where status::text = $1 and total > $2;
+
 
 -- 2. Редактирование результата ---------------------------------------------
 -- Все колонки из одной таблицы и есть её ключ → в .pgres ctrl-. → «Edit rows in table».

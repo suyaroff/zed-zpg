@@ -3,7 +3,7 @@
 //! tables a statement names, not a SQL parser.
 
 use crate::catalog::Relation;
-use crate::header::display_ident;
+use crate::header::{display_ident, quote_literal};
 use crate::snapshot::Column;
 use crate::sqlsplit::{dollar_tag, is_ident};
 
@@ -169,6 +169,31 @@ fn tokens(sql: &str) -> Vec<Token> {
         };
         out.push(Token { tok, start, end: i });
     }
+    out
+}
+
+/// `stmt` with each `$n` that has a value in `params` replaced by a literal
+/// (`None` is NULL). Others stay: `PREPARE` and function bodies have their own.
+pub fn bind(stmt: &str, params: &[(u32, Option<String>)]) -> String {
+    if params.is_empty() {
+        return stmt.to_string();
+    }
+    let mut out = String::with_capacity(stmt.len());
+    let mut from = 0;
+    for t in tokens(stmt) {
+        let Tok::Ident { name, quoted: false } = &t.tok else {
+            continue;
+        };
+        let Some(n) = name.strip_prefix('$').and_then(|n| n.parse::<u32>().ok()) else {
+            continue;
+        };
+        if let Some((_, v)) = params.iter().find(|(k, _)| *k == n) {
+            out.push_str(&stmt[from..t.start]);
+            out += &v.as_deref().map_or("NULL".to_string(), quote_literal);
+            from = t.end;
+        }
+    }
+    out.push_str(&stmt[from..]);
     out
 }
 
