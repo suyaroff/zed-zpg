@@ -5,7 +5,7 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -14,8 +14,10 @@ jobs:
         include:
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
           - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
-          - { target: x86_64-apple-darwin, os: macos-14 }
-          - { target: aarch64-apple-darwin, os: macos-14 }
+          # Pinned macOS images get removed (macos-14 broke 0.4.0); the Intel
+          # binary is cross-compiled on the arm64 runner.
+          - { target: x86_64-apple-darwin, os: macos-latest }
+          - { target: aarch64-apple-darwin, os: macos-latest }
           - { target: x86_64-pc-windows-msvc, os: windows-latest }
     runs-on: ${{ matrix.os }}
     steps:
@@ -31,6 +33,27 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: Compress-Archive -Path target/${{ matrix.target }}/release/zpg.exe -DestinationPath zpg-${{ matrix.target }}.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: zpg-${{ matrix.target }}
+          path: zpg-${{ matrix.target }}.*
+          if-no-files-found: error
+
+  # One release with every archive, only after all builds succeeded: the
+  # extension downloads from the latest release, so a partial one breaks
+  # the missing platforms.
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: zpg-*
+          merge-multiple: true
+          path: dist
       - uses: softprops/action-gh-release@v3
         with:
-          files: zpg-${{ matrix.target }}.*
+          files: dist/*
+          fail_on_unmatched_files: true

@@ -18,7 +18,7 @@ cargo audit --deny warnings                    # RustSec advisories for Cargo.lo
 
 - Single test: `cargo test -p zpg-core <test_name>` (or `-p zpg`). Tests are unit tests inside the modules; none need a running Postgres.
 - Install the server locally: `cargo install --path crates/zpg`. In Zed: `zed: install dev extension` → this directory. The extension prefers `zpg` from `PATH` over downloading a release.
-- Release: bump the version in all three `Cargo.toml`s and `extension.toml`, tag `v*`; `release.yml` builds `zpg-<target>.tar.gz|zip` assets, whose names `src/lib.rs` relies on.
+- Release: bump the version in all three `Cargo.toml`s and `extension.toml`, tag `v*`; `release.yml` builds `zpg-<target>.tar.gz|zip` assets, whose names `src/lib.rs` relies on, and publishes the release only after all five builds succeed (the extension downloads from the latest release).
 
 ## Architecture
 
