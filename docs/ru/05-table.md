@@ -6,9 +6,9 @@
 # zpg v1 conn=local table=zpg_demo.customers pk=id page=1 limit=100 total=8 width=40 apply=manual
 | id | email               | name             | city      | vip   | created_at                    | note                                     |
 |----|---------------------|------------------|-----------|-------|-------------------------------|------------------------------------------|
-| 1  | anna@example.com    | Анна Петрова     | Ташкент   | true  | 2026-10-18 01:40:44.321115+05 | NULL                                     |
-| 4  | dilnoza@example.com | Дилноза Каримова | Самарканд | true  | 2026-10-18 01:40:44.321115+05 | Две строки:\nвторая строка               |
-| 8  | hiro@example.com    | Hiro Tanaka      | Osaka     | false | 2026-10-18 01:40:44.321115+05 | Очень длинная заметка о клиенте, котора… |
+| 1  | anna@example.com    | Anna Petrova     | Tashkent  | true  | 2026-10-18 01:40:44.321115+05 | NULL                                     |
+| 4  | dilnoza@example.com | Dilnoza Karimova | Samarkand | true  | 2026-10-18 01:40:44.321115+05 | Two lines:\nthe second line              |
+| 8  | hiro@example.com    | Hiro Tanaka      | Osaka     | false | 2026-10-18 01:40:44.321115+05 | A very long note about the customer tha… |
 ```
 
 - **Строка 1 — шапка**: какие строки показаны и как записывать, см. [ниже](#шапка).
@@ -19,7 +19,7 @@
 
 ## Кнопки над шапкой
 
-Над первой строкой — кнопки (code lens, нужен `"code_lens": "on"`, см. [Установка](01-install.md#3-расширение-sql)): **Apply changes (…)** — когда есть правки, **Next page** и **Previous page**, **Refresh**. Они вызывают те же действия, что `ctrl-.`. Такие же кнопки **Apply changes** и **Refresh row** есть над [строкой](07-relations.md#просмотр-строки), а над [каталогом](04-catalog.md) — **Refresh catalog** и **Open settings file**.
+Над первой строкой — кнопки (code lens, нужен `"code_lens": "on"`, см. [Установка](01-install.md#4-настройки-zed)): **Apply changes (…)** — когда есть правки, **Next page** и **Previous page**, **Refresh**. Они вызывают те же действия, что `ctrl-.`. Такие же кнопки **Apply changes** и **Refresh row** есть над [строкой](07-relations.md#просмотр-строки), а над [каталогом](04-catalog.md) — **Refresh catalog** и **Open settings file**.
 
 ## Шапка
 
@@ -40,7 +40,7 @@
 | `apply` | когда записывать в базу: `manual` или `save` | `apply=save` |
 | `conn`, `table`, `pk`, `total` | только для информации, менять нельзя | |
 
-- `where`, `order` и `columns` можно писать без кавычек: значение тянется до следующего поля шапки. `order=id desc` и `where=vip and city = 'Ташкент'` работают как есть, при сохранении zpg сам возьмёт их в кавычки.
+- `where`, `order` и `columns` можно писать без кавычек: значение тянется до следующего поля шапки. `order=id desc` и `where=vip and city = 'Tashkent'` работают как есть, при сохранении zpg сам возьмёт их в кавычки.
 - Остальные значения с пробелами пишутся в двойных кавычках, кавычка внутри — `\"`. Одинарные кавычки SQL пишутся как есть.
 - Чтобы убрать фильтр или сортировку, удалите поле целиком.
 - Ошибка в `where`/`order` придёт сообщением Postgres, страница останется прежней.
@@ -54,8 +54,8 @@
 # заказы последней недели, новые сверху
 … where="created_at > now() - interval '7 days'" order="created_at desc"
 
-# только VIP из Ташкента, три колонки
-… where="vip and city = 'Ташкент'" columns="name, email, city"
+# только VIP из Tashkent, три колонки
+… where="vip and city = 'Tashkent'" columns="name, email, city"
 
 # товары, у которых в attrs есть "wireless": true
 … where="attrs @> '{\"wireless\": true}'"
@@ -91,10 +91,10 @@
 
 | Ячейка | Действия |
 |---|---|
-| `Ташкент` в колонке `city` | **zpg: Filter: city = 'Ташкент'**, **zpg: Filter: city <> 'Ташкент'** |
+| `Tashkent` в колонке `city` | **zpg: Filter: city = 'Tashkent'**, **zpg: Filter: city <> 'Tashkent'** |
 | `NULL` в колонке `city` | **zpg: Filter: city IS NULL**, **zpg: Filter: city IS NOT NULL** |
 
-- Если `where` уже задан, условие добавляется через `AND` — действие называется **Also filter: …**. Так можно сужать выборку по шагам: сначала `city = 'Ташкент'`, потом `vip = 'true'`.
+- Если `where` уже задан, условие добавляется через `AND` — действие называется **Also filter: …**. Так можно сужать выборку по шагам: сначала `city = 'Tashkent'`, потом `vip = 'true'`.
 - Берётся полное значение из базы, даже если в ячейке оно обрезано.
 - Значения длиннее 200 символов и многострочные не предлагаются.
 - Для `json`, `xml` и геометрических типов, у которых нет `=`, сравнивается текст: `attrs::text = '…'`.
@@ -124,7 +124,7 @@ Zed всегда переносит строки длиннее 512 символ
 ```
 vip boolean · not null · has default
 
-Скидка 10% на все заказы
+10% discount on all orders
 ```
 
 — имя, тип, признаки (`primary key`, `not null`, `has default`, `generated`), внешний ключ (`→ zpg_demo.customers(id)`), комментарий колонки и, для ключа, кто на строку ссылается (`← referenced by zpg_demo.orders(customer_id)`). Для обрезанного значения — полное значение, а для некоторых типов — больше, чем помещается в ячейку:

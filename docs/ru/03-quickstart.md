@@ -56,10 +56,10 @@ zpg_demo.products     table       ~6 rows
 # zpg v1 conn=local table=zpg_demo.customers pk=id page=1 limit=100 total=8 width=40 apply=manual
 | id | email               | name             | city      | vip   | created_at                    | note                                     |
 |----|---------------------|------------------|-----------|-------|-------------------------------|------------------------------------------|
-| 1  | anna@example.com    | Анна Петрова     | Ташкент   | true  | 2026-10-18 01:40:44.321115+05 | NULL                                     |
-| 2  | bob@example.com     | Bob Smith        | London    | false | 2026-10-18 01:40:44.321115+05 | Предпочитает доставку утром              |
+| 1  | anna@example.com    | Anna Petrova     | Tashkent  | true  | 2026-10-18 01:40:44.321115+05 | NULL                                     |
+| 2  | bob@example.com     | Bob Smith        | London    | false | 2026-10-18 01:40:44.321115+05 | Prefers morning delivery                 |
 | 7  | gina@example.com    | Gina Rossi       | NULL      | false | 2026-10-18 01:40:44.321115+05 | NULL                                     |
-| 8  | hiro@example.com    | Hiro Tanaka      | Osaka     | false | 2026-10-18 01:40:44.321115+05 | Очень длинная заметка о клиенте, котора… |
+| 8  | hiro@example.com    | Hiro Tanaka      | Osaka     | false | 2026-10-18 01:40:44.321115+05 | A very long note about the customer tha… |
 ```
 
 ## 4. Правка

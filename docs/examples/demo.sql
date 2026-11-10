@@ -1,14 +1,14 @@
--- Демо-схема zpg_demo: на ней построены все примеры руководства (docs/ru).
+-- Demo schema zpg_demo: every example of the guide (docs/en, docs/ru) is built on it.
 --
--- Как создать:
---   * в Zed: откройте этот файл, выделите всё (ctrl-a) → ctrl-. → «zpg: Run selection on …»;
---     если подключений несколько, допишите первой строкой  -- @conn имя
---   * или из терминала:  psql -d ваша_база -f docs/examples/demo.sql
+-- To create it:
+--   * in Zed: open this file, select everything (ctrl-a) → ctrl-. → "zpg: Run selection on …";
+--     with several connections, add  -- @conn name  as the first line
+--   * or from a terminal:  psql -d your_database -f docs/examples/demo.sql
 --
--- Первый запрос удаляет и пересоздаёт только схему zpg_demo, поэтому файл
--- можно запускать повторно, чтобы вернуть данные к исходным. zpg спросит
--- подтверждение перед DROP — это ожидаемо.
--- Удалить демо целиком:  DROP SCHEMA zpg_demo CASCADE;
+-- The first statement drops and recreates only the zpg_demo schema, so the file
+-- can be run again to reset the data. zpg asks for confirmation before the DROP;
+-- that is expected.
+-- To remove the demo completely:  DROP SCHEMA zpg_demo CASCADE;
 
 DROP SCHEMA IF EXISTS zpg_demo CASCADE;
 CREATE SCHEMA zpg_demo;
@@ -55,7 +55,7 @@ CREATE TABLE zpg_demo.order_items (
     PRIMARY KEY (order_id, product_id)
 );
 
--- Без первичного ключа: zpg покажет её только для чтения.
+-- No primary key: zpg shows it read-only.
 CREATE TABLE zpg_demo.events (
     at      timestamptz NOT NULL DEFAULT now(),
     level   text NOT NULL,
@@ -63,7 +63,7 @@ CREATE TABLE zpg_demo.events (
     payload jsonb
 );
 
--- orders.total всегда равен сумме позиций.
+-- orders.total always equals the sum of its items.
 CREATE FUNCTION zpg_demo.recalc_total() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     UPDATE zpg_demo.orders o
@@ -81,35 +81,35 @@ FROM zpg_demo.orders o
 JOIN zpg_demo.customers c ON c.id = o.customer_id
 WHERE o.status IN ('paid', 'shipped');
 
-COMMENT ON TABLE zpg_demo.customers IS 'Покупатели интернет-магазина';
-COMMENT ON COLUMN zpg_demo.customers.vip IS 'Скидка 10% на все заказы';
-COMMENT ON COLUMN zpg_demo.orders.total IS 'Считается триггером order_items_total';
+COMMENT ON TABLE zpg_demo.customers IS 'Customers of the online shop';
+COMMENT ON COLUMN zpg_demo.customers.vip IS '10% discount on all orders';
+COMMENT ON COLUMN zpg_demo.orders.total IS 'Computed by the order_items_total trigger';
 COMMENT ON COLUMN zpg_demo.order_items.amount IS 'qty * price, generated';
 
 INSERT INTO zpg_demo.customers (email, name, city, vip, note) VALUES
-    ('anna@example.com',  'Анна Петрова',    'Ташкент',   true,  NULL),
-    ('bob@example.com',   'Bob Smith',       'London',    false, 'Предпочитает доставку утром'),
+    ('anna@example.com',  'Anna Petrova',    'Tashkent',  true,  NULL),
+    ('bob@example.com',   'Bob Smith',       'London',    false, 'Prefers morning delivery'),
     ('chen@example.com',  'Chen Wei',        'Shanghai',  false, NULL),
-    ('dilnoza@example.com','Дилноза Каримова','Самарканд', true,  E'Две строки:\nвторая строка'),
+    ('dilnoza@example.com','Dilnoza Karimova','Samarkand', true,  E'Two lines:\nthe second line'),
     ('emma@example.com',  'Emma Müller',     'Berlin',    false, NULL),
-    ('farid@example.com', 'Фарид Алиев',     'Ташкент',   false, NULL),
+    ('farid@example.com', 'Farid Aliev',     'Tashkent',  false, NULL),
     ('gina@example.com',  'Gina Rossi',      NULL,        false, NULL),
-    ('hiro@example.com',  'Hiro Tanaka',     'Osaka',     false, 'Очень длинная заметка о клиенте, которая точно не поместится в ячейку шириной сорок символов и будет обрезана');
+    ('hiro@example.com',  'Hiro Tanaka',     'Osaka',     false, 'A very long note about the customer that will surely not fit into a forty-character cell and will be cut off');
 
 INSERT INTO zpg_demo.products (sku, title, price, tags, attrs, active) VALUES
-    ('KB-01', 'Клавиатура',   45.00, '{periphery,usb}', '{"layout": "ru/en", "wireless": false}', true),
-    ('MS-02', 'Мышь',         19.90, '{periphery}',     '{"dpi": 1600, "wireless": true}',        true),
-    ('MN-27', 'Монитор 27"', 289.00, '{display}',       '{"size": 27, "panel": "IPS", "hz": 144}', true),
-    ('HD-01', 'Наушники',     79.00, '{audio}',         NULL,                                     true),
-    ('CB-03', 'Кабель USB-C',  6.50, '{usb,cable}',     '{"length_m": 1.5}',                      true),
-    ('OLD-1', 'Снят с продаж', 10.00, '{}',             NULL,                                     false);
+    ('KB-01', 'Keyboard',     45.00, '{periphery,usb}', '{"layout": "ru/en", "wireless": false}', true),
+    ('MS-02', 'Mouse',        19.90, '{periphery}',     '{"dpi": 1600, "wireless": true}',        true),
+    ('MN-27', 'Monitor 27"', 289.00, '{display}',       '{"size": 27, "panel": "IPS", "hz": 144}', true),
+    ('HD-01', 'Headphones',   79.00, '{audio}',         NULL,                                     true),
+    ('CB-03', 'USB-C cable',   6.50, '{usb,cable}',     '{"length_m": 1.5}',                      true),
+    ('OLD-1', 'Discontinued', 10.00, '{}',             NULL,                                     false);
 
 INSERT INTO zpg_demo.orders (customer_id, status, created_at, comment) VALUES
     (1, 'paid',      now() - interval '20 days', NULL),
-    (1, 'shipped',   now() - interval '12 days', 'Подарочная упаковка'),
+    (1, 'shipped',   now() - interval '12 days', 'Gift wrapping'),
     (2, 'new',       now() - interval '2 hours', NULL),
     (3, 'paid',      now() - interval '5 days',  NULL),
-    (4, 'cancelled', now() - interval '30 days', 'Клиент передумал'),
+    (4, 'cancelled', now() - interval '30 days', 'Customer changed their mind'),
     (4, 'paid',      now() - interval '1 day',   NULL),
     (5, 'shipped',   now() - interval '9 days',  NULL),
     (6, 'new',       now() - interval '30 minutes', NULL),

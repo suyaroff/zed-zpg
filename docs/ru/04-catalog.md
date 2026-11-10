@@ -47,7 +47,7 @@ zpg_demo.orders · table · ~9 rows · 64 kB
 - `customer_id` bigint · not null
 - `status` zpg_demo.order_status · not null · has default
 - `created_at` timestamp with time zone · not null · has default
-- `total` numeric(12,2) · not null · has default — Считается триггером order_items_total
+- `total` numeric(12,2) · not null · has default — Computed by the order_items_total trigger
 - `comment` text
 
 Indexes
@@ -79,7 +79,7 @@ CREATE TABLE zpg_demo.orders (
 
 CREATE INDEX orders_customer_idx ON zpg_demo.orders USING btree (customer_id);
 CREATE INDEX orders_open_idx ON zpg_demo.orders USING btree (created_at) WHERE (status = ANY (ARRAY['new'::zpg_demo.order_status, 'paid'::zpg_demo.order_status]));
-COMMENT ON COLUMN zpg_demo.orders.total IS 'Считается триггером order_items_total';
+COMMENT ON COLUMN zpg_demo.orders.total IS 'Computed by the order_items_total trigger';
 ```
 
 Что входит:

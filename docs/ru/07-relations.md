@@ -8,9 +8,9 @@
 
 ```
 # zpg v1 conn=local table=zpg_demo.customers pk=id page=1 limit=100 total=1 width=40 apply=manual where="id = '1'"
-| id | email            | name         | city    | vip  | created_at                    | note |
-|----|------------------|--------------|---------|------|-------------------------------|------|
-| 1  | anna@example.com | Анна Петрова | Ташкент | true | 2026-10-18 01:40:44.321115+05 | NULL |
+| id | email            | name         | city     | vip  | created_at                    | note |
+|----|------------------|--------------|----------|------|-------------------------------|------|
+| 1  | anna@example.com | Anna Petrova | Tashkent | true | 2026-10-18 01:40:44.321115+05 | NULL |
 ```
 
 - Чтобы снова увидеть всю таблицу: `ctrl-.` → **zpg: Clear filter**, или удалите `where` из шапки и сохраните.
@@ -23,8 +23,8 @@
   → zpg_demo.customers (F12 opens it)
   - id: 1
   - email: anna@example.com
-  - name: Анна Петрова
-  - city: Ташкент
+  - name: Anna Petrova
+  - city: Tashkent
   …
   ```
 
@@ -56,13 +56,13 @@
 # zpg v1 row conn=local table=zpg_demo.customers key=id=4
 id: 4
 email: dilnoza@example.com
-name: Дилноза Каримова
-city: Самарканд
+name: Dilnoza Karimova
+city: Samarkand
 vip: true
 created_at: 2026-10-18 01:40:44.321115+05
 note: |
-  Две строки:
-  вторая строка
+  Two lines:
+  the second line
 ```
 
 Для `jsonb` (`zpg_demo.products`, строка 3):
@@ -71,7 +71,7 @@ note: |
 # zpg v1 row conn=local table=zpg_demo.products key=id=3
 id: 3
 sku: MN-27
-title: Монитор 27"
+title: Monitor 27"
 price: 289.00
 tags: {display}
 attrs: |

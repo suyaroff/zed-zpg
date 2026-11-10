@@ -4,14 +4,14 @@ Zed extensions cannot add custom panels, so zpg shows a PostgreSQL table as a te
 
 ```
 # zpg v1 conn=local table=zpg_demo.orders pk=id page=1 limit=100 total=9 width=40 apply=manual
-| id | customer_id | status    | created_at                    | total   | comment             |
-|----|-------------|-----------|-------------------------------|---------|---------------------|
-| 1  | 1           | paid      | 2026-09-28 01:40:44.321115+05 | 64.90   | NULL                |
-| 2  | 1           | shipped   | 2026-10-06 01:40:44.321115+05 | 289.00  | Подарочная упаковка |
-| +  | 3           | new       | DEFAULT                       | DEFAULT | NULL                |
+| id | customer_id | status    | created_at                    | total   | comment                     |
+|----|-------------|-----------|-------------------------------|---------|-----------------------------|
+| 1  | 1           | paid      | 2026-09-28 01:40:44.321115+05 | 64.90   | NULL                        |
+| 2  | 1           | shipped   | 2026-10-06 01:40:44.321115+05 | 289.00  | Gift wrapping               |
+| +  | 3           | new       | DEFAULT                       | DEFAULT | NULL                        |
 ```
 
-**Documentation (Russian): [docs/ru](docs/ru/README.md).** Demo schema to try everything on: [docs/examples/demo.sql](docs/examples/demo.sql); a walk through the `.sql` features: [docs/examples/tour.sql](docs/examples/tour.sql).
+**Documentation: [docs/en](docs/en/README.md)** (in Russian: [docs/ru](docs/ru/README.md)). Demo schema to try everything on: [docs/examples/demo.sql](docs/examples/demo.sql); a walk through the `.sql` features: [docs/examples/tour.sql](docs/examples/tour.sql).
 
 ## Install
 
@@ -38,27 +38,27 @@ cargo install --path crates/zpg     # puts `zpg` into ~/.cargo/bin
    }
    ```
 
-Details: [install](docs/ru/01-install.md), [connections and settings](docs/ru/02-connections.md).
+Details: [install](docs/en/01-install.md), [connections and settings](docs/en/02-connections.md).
 
 ## Features
 
 Everything works through Zed's own actions: **F12** (go to definition), **hover**, **completion** and **`ctrl-.`** (code actions).
 
-**Catalog** ([docs](docs/ru/04-catalog.md)) — `.zpg/catalog.pgdb` lists every connection with its tables and row estimates, also in the outline panel; `ctrl-t` finds a table from any file. Hover shows columns, size and indexes; *Show DDL* rebuilds `CREATE TABLE` with constraints, indexes, triggers and comments; *Back up (pg_dump)* writes `pg_dump --table` output into `.zpg/<conn>/backups/` (settings `pg_dump`, `pg_dump_args`); *Drop…* opens the `DROP` to review.
+**Catalog** ([docs](docs/en/04-catalog.md)) — `.zpg/catalog.pgdb` lists every connection with its tables and row estimates, also in the outline panel; `ctrl-t` finds a table from any file. Hover shows columns, size and indexes; *Show DDL* rebuilds `CREATE TABLE` with constraints, indexes, triggers and comments; *Back up (pg_dump)* writes `pg_dump --table` output into `.zpg/<conn>/backups/` (settings `pg_dump`, `pg_dump_args`); *Drop…* opens the `DROP` to review.
 
-**Table pages** ([docs](docs/ru/05-table.md)) — `.pgt` files with a header line for `where`, `order`, `columns`, `page`/`limit`, `width` and `apply`, and `total` rows matching. Sort by a column, filter by a cell's value, page with *Next/Last page (2/37)*. Typed hover for json, timestamps, arrays, bytea.
+**Table pages** ([docs](docs/en/05-table.md)) — `.pgt` files with a header line for `where`, `order`, `columns`, `page`/`limit`, `width` and `apply`, and `total` rows matching. Sort by a column, filter by a cell's value, page with *Next/Last page (2/37)*. Typed hover for json, timestamps, arrays, bytea.
 
-**Editing** ([docs](docs/ru/06-editing.md)) — `NULL`, `DEFAULT`, `+` for a new key, `\n`/`\|` escapes; *Insert row* template; completion of foreign key values with labels; *Preview SQL*; one transaction per apply; `xmin` guards against concurrent changes; `apply=save` writes on every save. Each apply goes to a per-table change log with the statements that revert it; *Import rows* adds a CSV from `.zpg/<conn>/imports/` to the page, to check and apply like any edit.
+**Editing** ([docs](docs/en/06-editing.md)) — `NULL`, `DEFAULT`, `+` for a new key, `\n`/`\|` escapes; *Insert row* template; completion of foreign key values with labels; *Preview SQL*; one transaction per apply; `xmin` guards against concurrent changes; `apply=save` writes on every save. Each apply goes to a per-table change log with the statements that revert it; *Import rows* adds a CSV from `.zpg/<conn>/imports/` to the page, to check and apply like any edit.
 
-**Relations** ([docs](docs/ru/07-relations.md)) — F12 on a foreign key opens the referenced row; *Rows of … referencing this* goes the other way; the `.pgr` row view edits long text and pretty-printed jsonb.
+**Relations** ([docs](docs/en/07-relations.md)) — F12 on a foreign key opens the referenced row; *Rows of … referencing this* goes the other way; the `.pgr` row view edits long text and pretty-printed jsonb.
 
-**SQL files** ([docs](docs/ru/08-sql.md)) — ▶ runs a statement (`-- @conn` picks the connection, `-- @param $1 = 42` gives `$1` a value), results open as `.pgres`, *Edit rows in table* turns a result into an editable page. Statements in the outline panel (`"document_symbols": "on"`). Completion, hover and F12 for tables and columns; errors underlined on save (Postgres parses each statement, nothing runs); warnings and a *Run / Cancel* prompt for `UPDATE`/`DELETE` without `WHERE`, `TRUNCATE`, `DROP`; *Explain* / *Explain analyze* (rolled back); `.zpg/history.sql`; cancel a running statement from `ctrl-.` or the status bar.
+**SQL files** ([docs](docs/en/08-sql.md)) — ▶ runs a statement (`-- @conn` picks the connection, `-- @param $1 = 42` gives `$1` a value), results open as `.pgres`, *Edit rows in table* turns a result into an editable page. Statements in the outline panel (`"document_symbols": "on"`). Completion, hover and F12 for tables and columns; errors underlined on save (Postgres parses each statement, nothing runs); warnings and a *Run / Cancel* prompt for `UPDATE`/`DELETE` without `WHERE`, `TRUNCATE`, `DROP`; *Explain* / *Explain analyze* (rolled back); `.zpg/history.sql`; cancel a running statement from `ctrl-.` or the status bar.
 
-**Administration** ([docs](docs/ru/09-admin.md)) — *Server activity* from `pg_stat_activity` with `blocked_by`; cancel or terminate a backend from any result with a `pid` column.
+**Administration** ([docs](docs/en/09-admin.md)) — *Server activity* from `pg_stat_activity` with `blocked_by`; cancel or terminate a backend from any result with a `pid` column.
 
-**Export** ([docs](docs/ru/10-export.md)) — a page or a result as CSV, JSON or INSERT statements; all rows matching `where`, or all rows of a cut result, via `COPY`.
+**Export** ([docs](docs/en/10-export.md)) — a page or a result as CSV, JSON or INSERT statements; all rows matching `where`, or all rows of a cut result, via `COPY`.
 
-All actions, settings, header fields, files and error messages: [reference](docs/ru/11-reference.md).
+All actions, settings, header fields, files and error messages: [reference](docs/en/11-reference.md).
 
 ## Development
 

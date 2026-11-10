@@ -34,8 +34,8 @@
 
 ```csv
 id,sku,title,price,tags,attrs,active
-1,KB-01,Клавиатура,45.00,"{periphery,usb}","{""layout"": ""ru/en"", ""wireless"": false}",true
-4,HD-01,Наушники,79.00,{audio},,true
+1,KB-01,Keyboard,45.00,"{periphery,usb}","{""layout"": ""ru/en"", ""wireless"": false}",true
+4,HD-01,Headphones,79.00,{audio},,true
 ```
 
 - Первая строка — имена колонок.
@@ -46,8 +46,8 @@ id,sku,title,price,tags,attrs,active
 
 ```json
 [
-  {"id": 1, "sku": "KB-01", "title": "Клавиатура", "price": 45.00, "tags": "{periphery,usb}", "attrs": {"layout": "ru/en", "wireless": false}, "active": true},
-  {"id": 4, "sku": "HD-01", "title": "Наушники", "price": 79.00, "tags": "{audio}", "attrs": null, "active": true}
+  {"id": 1, "sku": "KB-01", "title": "Keyboard", "price": 45.00, "tags": "{periphery,usb}", "attrs": {"layout": "ru/en", "wireless": false}, "active": true},
+  {"id": 4, "sku": "HD-01", "title": "Headphones", "price": 79.00, "tags": "{audio}", "attrs": null, "active": true}
 ]
 ```
 
@@ -59,8 +59,8 @@ id,sku,title,price,tags,attrs,active
 
 ```sql
 INSERT INTO zpg_demo.products (id, sku, title, price, tags, attrs, active) VALUES
-  ('1', 'KB-01', 'Клавиатура', '45.00', '{periphery,usb}', '{"layout": "ru/en", "wireless": false}', 'true'),
-  ('4', 'HD-01', 'Наушники', '79.00', '{audio}', NULL, 'true');
+  ('1', 'KB-01', 'Keyboard', '45.00', '{periphery,usb}', '{"layout": "ru/en", "wireless": false}', 'true'),
+  ('4', 'HD-01', 'Headphones', '79.00', '{audio}', NULL, 'true');
 ```
 
 - По 500 строк в одном `INSERT`.

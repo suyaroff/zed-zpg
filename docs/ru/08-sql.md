@@ -12,7 +12,7 @@ zpg подключается к любому `.sql`-файлу проекта: �
 -- @conn local
 select id, name, city, vip from zpg_demo.customers order by id;
 
-update zpg_demo.customers set city = 'Ташкент' where id = 7;
+update zpg_demo.customers set city = 'Tashkent' where id = 7;
 ```
 
 - **Кнопка ▶** выполняет запрос.
@@ -67,7 +67,7 @@ select * from zpg_demo.orders where id = $1 and comment = $2 or customer_id = $3
 # Rows of zpg_demo.customers: code action “Edit rows in table” opens them for editing.
 | id | name             | city      | vip   |
 |----|------------------|-----------|-------|
-| 1  | Анна Петрова     | Ташкент   | true  |
+| 1  | Anna Petrova     | Tashkent  | true  |
 | 2  | Bob Smith        | London    | false |
 ```
 
@@ -209,7 +209,7 @@ select id, name, city, vip from zpg_demo.customers order by id;
 
 -- 2026-10-18 01:45:20 · UPDATE 1 · 1 ms
 -- @conn local
-update zpg_demo.customers set city = 'Ташкент' where id = 7;
+update zpg_demo.customers set city = 'Tashkent' where id = 7;
 ```
 
 - Над каждой записью есть ▶ — запрос выполнится снова на том же подключении.
