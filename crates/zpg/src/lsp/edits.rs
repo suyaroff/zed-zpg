@@ -102,7 +102,7 @@ mod tests {
         let cases = [
             ("a\nb\nc\n", "a\nb\nc\n"),
             ("a\nb\nc\n", "a\nB\nc\n"),
-            ("| 1 | кот |\n| 2 | x |\n", "| 1 | кот 🐈 |\n| 2 | x |\n"),
+            ("| 1 | café |\n| 2 | x |\n", "| 1 | café 🐈 |\n| 2 | x |\n"),
             ("a\nb\nc\n", "a\nx\ny\nb\nc\n"),
             ("a\nb\nc\nd\n", "a\nd\n"),
             ("a\nb", "a\nb\nc"),

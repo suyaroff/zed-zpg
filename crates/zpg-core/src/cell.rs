@@ -129,7 +129,7 @@ mod tests {
 
     #[test]
     fn round_trip() {
-        for s in ["", "a b", " lead", "trail ", "  ", "a|b\\c\nd\te\r", "NULL", "DEFAULT", "+", "\u{1b}x", "кот"] {
+        for s in ["", "a b", " lead", "trail ", "  ", "a|b\\c\nd\te\r", "NULL", "DEFAULT", "+", "\u{1b}x", "café"] {
             let v = Value::Text(s.into());
             assert_eq!(parse(&render(&v)).unwrap(), v, "{s:?}");
         }

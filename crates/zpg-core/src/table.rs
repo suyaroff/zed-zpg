@@ -217,11 +217,11 @@ mod tests {
         let text = render(
             h,
             &["id".into(), "name".into()],
-            &[vec!["1".into(), "кот".into()], vec!["22".into(), "NULL".into()]],
+            &[vec!["1".into(), "café".into()], vec!["22".into(), "NULL".into()]],
         );
         assert_eq!(
             text,
-            "# zpg v1 conn=c table=public.t\n| id | name |\n|----|------|\n| 1  | кот  |\n| 22 | NULL |\n"
+            "# zpg v1 conn=c table=public.t\n| id | name |\n|----|------|\n| 1  | café |\n| 22 | NULL |\n"
         );
         let p = parse(&text);
         assert!(p.issues.is_empty(), "{:?}", p.issues);
@@ -229,9 +229,9 @@ mod tests {
         assert_eq!(p.rows.len(), 2);
         assert_eq!(p.rows[1].line, 4);
         assert_eq!(realign(&text), None);
-        let messy = text.replace("| 1  | кот  |", "|1|кот длинный|");
+        let messy = text.replace("| 1  | café |", "|1|café au lait|");
         let fixed = realign(&messy).unwrap();
-        assert!(fixed.contains("| 1  | кот длинный |"), "{fixed}");
-        assert!(fixed.contains("|----|-------------|"), "{fixed}");
+        assert!(fixed.contains("| 1  | café au lait |"), "{fixed}");
+        assert!(fixed.contains("|----|--------------|"), "{fixed}");
     }
 }

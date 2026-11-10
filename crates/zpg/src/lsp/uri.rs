@@ -79,9 +79,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn uri_round_trip() {
-        let path = Path::new("/tmp/a b/кот%#.pgt");
+        let path = Path::new("/tmp/a b/café%#.pgt");
         let uri = path_to_uri(path).unwrap();
-        assert_eq!(uri.as_str(), "file:///tmp/a%20b/%D0%BA%D0%BE%D1%82%25%23.pgt");
+        assert_eq!(uri.as_str(), "file:///tmp/a%20b/caf%C3%A9%25%23.pgt");
         assert_eq!(uri_to_path(&uri).as_deref(), Some(path));
         assert_eq!(uri_to_path(&"untitled:x".parse().unwrap()), None);
     }

@@ -47,11 +47,11 @@ mod tests {
 
         let mut text = String::new();
         for i in 0..100 {
-            text = append(&text, &entry(&i.to_string(), "c", "s", &["select 'ж'"]), 1000);
+            text = append(&text, &entry(&i.to_string(), "c", "s", &["select 'é'"]), 1000);
         }
         assert!(text.len() <= 1000 + HEADER.len(), "{}", text.len());
         assert!(text.starts_with(HEADER));
         assert!(text[HEADER.len()..].starts_with("-- "));
-        assert!(text.ends_with("-- 99 · s\n-- @conn c\nselect 'ж';\n\n"));
+        assert!(text.ends_with("-- 99 · s\n-- @conn c\nselect 'é';\n\n"));
     }
 }
